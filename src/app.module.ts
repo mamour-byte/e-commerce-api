@@ -13,6 +13,10 @@ import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { BrandsModule } from './brands/brands.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
+import { CouponsModule } from './coupons/coupons.module';
+import { ShippingModule } from './shipping/shipping.module';
+import { MailModule } from './mail/mail.module';
+import { ReviewsModule } from './reviews/reviews.module';
 
 @Module({
   imports: [
@@ -28,6 +32,10 @@ import { CloudinaryModule } from './cloudinary/cloudinary.module';
     PaymentsModule,
     BrandsModule,
     CloudinaryModule,
+    CouponsModule,
+    ShippingModule,
+    MailModule,
+    ReviewsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
