@@ -2,11 +2,13 @@ import {
 	BadRequestException,
 	ForbiddenException,
 	Injectable,
+	Logger,
 	NotFoundException,
 } from '@nestjs/common';
 import {
 	CartStatus,
 	CouponType,
+	FulfillmentType,
 	InventoryMovementType,
 	OrderStatus,
 	PaymentStatus,
@@ -21,11 +23,7 @@ import { UpdatePaymentStatusDto } from './dto/update-payment-status.dto';
 const ORDER_INCLUDE = {
 	items: true,
 	payments: true,
-	shipment: {
-		include: {
-			shippingMethod: true,
-		},
-	},
+	deliveryZone: true,
 	user: {
 		select: {
 			id: true,
@@ -38,6 +36,7 @@ const ORDER_INCLUDE = {
 } as const;
 
 import { MailService } from '../mail/mail.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 interface ResolvedOrderItem {
 	productId: string;
@@ -53,9 +52,12 @@ interface ResolvedOrderItem {
 
 @Injectable()
 export class OrdersService {
+	private readonly logger = new Logger(OrdersService.name);
+
 	constructor(
 		private readonly prisma: PrismaService,
 		private readonly mailService: MailService,
+		private readonly notificationsService: NotificationsService,
 	) {}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -76,18 +78,27 @@ export class OrdersService {
 			0,
 		);
 
-		// 3. Calcul des frais de livraison
+		// 3. Calcul des frais de livraison selon le mode de retrait
 		let shippingAmount = 0;
-		let shippingMethodName: string | undefined;
-		if (dto.shippingMethodId) {
-			const shippingMethod = await this.prisma.shippingMethod.findFirst({
-				where: { id: dto.shippingMethodId, isActive: true },
-			});
-			if (!shippingMethod) {
-				throw new NotFoundException('Méthode de livraison introuvable ou inactive.');
+		let deliveryZoneId: string | null = null;
+
+		if (dto.fulfillmentType === FulfillmentType.DELIVERY) {
+			if (!dto.deliveryZoneId) {
+				throw new BadRequestException('Une zone de livraison est requise pour une commande en livraison.');
 			}
-			shippingAmount = Number(shippingMethod.price);
-			shippingMethodName = shippingMethod.name;
+
+			const zone = await this.prisma.deliveryZone.findFirst({
+				where: { id: dto.deliveryZoneId, isActive: true },
+			});
+
+			if (!zone) {
+				throw new NotFoundException('Zone de livraison introuvable ou inactive.');
+			}
+
+			shippingAmount = Number(zone.price);
+			deliveryZoneId = zone.id;
+		} else if (dto.deliveryZoneId) {
+			throw new BadRequestException('Une zone de livraison ne peut pas être sélectionnée pour un retrait en magasin.');
 		}
 
 		// 4. Calcul de la réduction (Coupon)
@@ -127,13 +138,15 @@ export class OrdersService {
 					currency: 'XOF',
 					customerEmail: dto.customerEmail,
 					customerPhone: dto.customerPhone,
+					fulfillmentType: dto.fulfillmentType,
+					deliveryZoneId,
 					shippingFirstName: dto.shippingFirstName,
 					shippingLastName: dto.shippingLastName,
 					shippingPhone: dto.shippingPhone || dto.customerPhone,
-					shippingAddress: dto.shippingAddress,
-					shippingCity: dto.shippingCity,
-					shippingRegion: dto.shippingRegion,
-					shippingCountry: dto.shippingCountry || 'SN',
+					shippingAddress: dto.fulfillmentType === FulfillmentType.DELIVERY ? dto.shippingAddress : null,
+					shippingCity: dto.fulfillmentType === FulfillmentType.DELIVERY ? dto.shippingCity : null,
+					shippingRegion: dto.fulfillmentType === FulfillmentType.DELIVERY ? dto.shippingRegion : null,
+					shippingCountry: dto.fulfillmentType === FulfillmentType.DELIVERY ? dto.shippingCountry || 'SN' : 'SN',
 					couponCode: dto.couponCode ? dto.couponCode.toUpperCase() : null,
 					notes: dto.notes,
 					items: {
@@ -197,23 +210,7 @@ export class OrdersService {
 				});
 			}
 
-			// D. Créer l'enregistrement d'expédition (Shipment)
-			await tx.shipment.create({
-				data: {
-					orderId: createdOrder.id,
-					shippingMethodId: dto.shippingMethodId,
-					carrier: shippingMethodName || 'Standard',
-					status: 'PENDING',
-					address: {
-						address: dto.shippingAddress,
-						city: dto.shippingCity,
-						region: dto.shippingRegion,
-						country: dto.shippingCountry || 'SN',
-					},
-				},
-			});
-
-			// E. Marquer le panier comme CONVERTED s'il s'agissait d'une commande via panier
+			// D. Marquer le panier comme CONVERTED s'il s'agissait d'une commande via panier
 			if (dto.cartId) {
 				await tx.cart.update({
 					where: { id: dto.cartId },
@@ -234,14 +231,10 @@ export class OrdersService {
 			return createdOrder;
 		});
 
-		const fullOrder = await this.findOne(order.id);
-		try {
-			await this.mailService.sendOrderReceipt(fullOrder);
-		} catch (error) {
-			// Ne pas bloquer la création de commande si l'envoi de mail échoue
-		}
+		// Envoyer notification aux admins pour nouvelle commande
+		await this.notificationsService.notifyOrderCreated(order.id, order.orderNumber, true);
 
-		return fullOrder;
+		return this.findOne(order.id);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -257,6 +250,7 @@ export class OrdersService {
 			userId,
 			...(query.status && { status: query.status }),
 			...(query.paymentStatus && { paymentStatus: query.paymentStatus }),
+			...(query.fulfillmentType && { fulfillmentType: query.fulfillmentType }),
 		};
 
 		const [items, total] = await Promise.all([
@@ -370,6 +364,7 @@ export class OrdersService {
 		const where: Prisma.OrderWhereInput = {
 			...(query.status && { status: query.status }),
 			...(query.paymentStatus && { paymentStatus: query.paymentStatus }),
+			...(query.fulfillmentType && { fulfillmentType: query.fulfillmentType }),
 			...(query.search && {
 				OR: [
 					{ orderNumber: { contains: query.search, mode: 'insensitive' } },
@@ -419,8 +414,10 @@ export class OrdersService {
 	}
 
 	async updateStatus(id: string, dto: UpdateOrderStatusDto, staffUserId?: string) {
-		const order = await this.prisma.order.findUnique({
-			where: { id },
+		const order = await this.prisma.order.findFirst({
+			where: {
+				OR: [{ id }, { orderNumber: id }],
+			},
 			include: { items: true },
 		});
 
@@ -433,6 +430,30 @@ export class OrdersService {
 
 		if (previousStatus === newStatus) {
 			return this.findOne(id);
+		}
+
+		const allowedTransitions: Record<OrderStatus, OrderStatus[]> = {
+			[OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED, OrderStatus.REFUNDED],
+			[OrderStatus.CONFIRMED]: [OrderStatus.IN_DELIVERY, OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUNDED],
+			[OrderStatus.IN_DELIVERY]: [OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUNDED],
+			[OrderStatus.DELIVERED]: [OrderStatus.REFUNDED],
+			[OrderStatus.CANCELLED]: [],
+			[OrderStatus.REFUNDED]: [],
+		};
+
+		if (!allowedTransitions[previousStatus].includes(newStatus)) {
+			throw new BadRequestException(
+				`Transition impossible : ${previousStatus} vers ${newStatus}.`,
+			);
+		}
+
+		if (
+			order.fulfillmentType === FulfillmentType.PICKUP &&
+			newStatus === OrderStatus.IN_DELIVERY
+		) {
+			throw new BadRequestException(
+				'Une commande en retrait magasin ne peut pas passer en cours de livraison.',
+			);
 		}
 
 		await this.prisma.$transaction(async (tx) => {
@@ -501,10 +522,9 @@ export class OrdersService {
 			} else if (
 				previousStatus === OrderStatus.PENDING &&
 				(newStatus === OrderStatus.CONFIRMED ||
-					newStatus === OrderStatus.PROCESSING ||
-					newStatus === OrderStatus.SHIPPED)
+					newStatus === OrderStatus.IN_DELIVERY)
 			) {
-				// De PENDING vers CONFIRMED/PROCESSING -> On transforme la réservation en VENTE effective (diminution du stock et de la réservation)
+				// De PENDING vers CONFIRMED/IN_DELIVERY -> On transforme la réservation en VENTE effective
 				for (const item of order.items) {
 					if (item.variantId) {
 						await tx.productVariant.update({
@@ -546,6 +566,25 @@ export class OrdersService {
 			});
 		});
 
+		// Envoyer les notifications appropriées selon le nouveau statut
+		switch (newStatus) {
+			case OrderStatus.CONFIRMED:
+				await this.notificationsService.notifyOrderConfirmed(order.id, order.orderNumber, order.userId || undefined);
+				break;
+			case OrderStatus.IN_DELIVERY:
+				await this.notificationsService.notifyOrderInDelivery(order.id, order.orderNumber, order.userId || undefined);
+				break;
+			case OrderStatus.DELIVERED:
+				await this.notificationsService.notifyOrderDelivered(order.id, order.orderNumber, order.userId || undefined);
+				break;
+			case OrderStatus.CANCELLED:
+				await this.notificationsService.notifyOrderCancelled(order.id, order.orderNumber, order.userId || undefined);
+				break;
+			case OrderStatus.REFUNDED:
+				await this.notificationsService.notifyOrderCancelled(order.id, order.orderNumber, order.userId || undefined);
+				break;
+		}
+
 		return this.findOne(id);
 	}
 
@@ -555,12 +594,22 @@ export class OrdersService {
 			throw new NotFoundException('Commande introuvable.');
 		}
 
+		const previousStatus = order.paymentStatus;
+
 		await this.prisma.order.update({
 			where: { id },
 			data: { paymentStatus: dto.status },
 		});
 
-		return this.findOne(id);
+		const updatedOrder = await this.findOne(id);
+
+		if (previousStatus !== PaymentStatus.PAID && dto.status === PaymentStatus.PAID) {
+			this.mailService.sendPaymentConfirmation(updatedOrder).catch((err) =>
+				this.logger.error(`Échec envoi email confirmation paiement commande ${updatedOrder.orderNumber}`, err),
+			);
+		}
+
+		return updatedOrder;
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────

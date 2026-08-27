@@ -17,6 +17,8 @@ import { CouponsModule } from './coupons/coupons.module';
 import { ShippingModule } from './shipping/shipping.module';
 import { MailModule } from './mail/mail.module';
 import { ReviewsModule } from './reviews/reviews.module';
+import { StatsModule } from './stats/stats.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -36,6 +38,8 @@ import { ReviewsModule } from './reviews/reviews.module';
     ShippingModule,
     MailModule,
     ReviewsModule,
+    StatsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

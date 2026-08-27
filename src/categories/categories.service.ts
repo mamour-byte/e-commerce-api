@@ -16,29 +16,38 @@ export class CategoriesService {
   ) {}
 
   async create(dto: CreateCategoryDto) {
+    let slug = dto.slug || dto.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+    if (!slug) {
+      slug = `category-${Date.now()}`;
+    }
+
     const existing = await this.prisma.category.findUnique({
-      where: {
-        slug: dto.slug,
-      },
+      where: { slug },
     });
 
     if (existing) {
-      throw new ConflictException(
-        'Une catégorie avec ce slug existe déjà.',
-      );
+      if (dto.slug) {
+        throw new ConflictException('Une catégorie avec ce slug existe déjà.');
+      } else {
+        slug = `${slug}-${Math.floor(100 + Math.random() * 900)}`;
+      }
     }
 
-    if (dto.parentId) {
-      await this.validateParent(dto.parentId);
+    let parentId = dto.parentId && dto.parentId.trim() !== '' ? dto.parentId : undefined;
+    if (parentId) {
+      const parentExists = await this.prisma.category.findUnique({ where: { id: parentId } });
+      if (!parentExists) {
+        parentId = undefined;
+      }
     }
 
     return this.prisma.category.create({
       data: {
         name: dto.name,
-        slug: dto.slug,
+        slug,
         description: dto.description,
         imageUrl: dto.imageUrl,
-        parentId: dto.parentId,
+        parentId,
         isActive: dto.isActive ?? true,
       },
 

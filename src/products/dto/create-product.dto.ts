@@ -19,10 +19,15 @@ export class CreateProductDto {
   @MaxLength(255)
   name!: string;
 
+  @IsOptional()
   @IsString()
   @MinLength(2)
   @MaxLength(255)
-  slug!: string;
+  slug?: string;
+
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
 
   @IsOptional()
   @IsString()

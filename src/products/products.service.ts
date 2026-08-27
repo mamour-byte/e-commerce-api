@@ -9,22 +9,28 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductQueryDto } from './dto/product-query.dto';
+import { ProductStatus } from '@prisma/client';
 
 @Injectable()
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateProductDto) {
+    let slug = dto.slug || dto.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+    if (!slug) {
+      slug = `product-${Date.now()}`;
+    }
+
     const existingSlug = await this.prisma.product.findUnique({
-      where: {
-        slug: dto.slug,
-      },
+      where: { slug },
     });
 
     if (existingSlug) {
-      throw new ConflictException(
-        'Un produit avec ce slug existe déjà.',
-      );
+      if (dto.slug) {
+        throw new ConflictException('Un produit avec ce slug existe déjà.');
+      } else {
+        slug = `${slug}-${Math.floor(100 + Math.random() * 900)}`;
+      }
     }
 
     if (dto.sku) {
@@ -41,10 +47,26 @@ export class ProductsService {
       }
     }
 
+    let categoryId = dto.categoryId && dto.categoryId.trim() !== '' ? dto.categoryId : undefined;
+    if (categoryId) {
+      const catExists = await this.prisma.category.findUnique({ where: { id: categoryId } });
+      if (!catExists) {
+        categoryId = undefined;
+      }
+    }
+
+    let brandId = dto.brandId && dto.brandId.trim() !== '' ? dto.brandId : undefined;
+    if (brandId) {
+      const brandExists = await this.prisma.brand.findUnique({ where: { id: brandId } });
+      if (!brandExists) {
+        brandId = undefined;
+      }
+    }
+
     return this.prisma.product.create({
       data: {
         name: dto.name,
-        slug: dto.slug,
+        slug,
         sku: dto.sku,
 
         description: dto.description,
@@ -60,11 +82,23 @@ export class ProductsService {
         status: dto.status,
         isFeatured: dto.isFeatured ?? false,
 
-        categoryId: dto.categoryId,
-        brandId: dto.brandId,
+        categoryId,
+        brandId,
 
         seoTitle: dto.seoTitle,
         seoDescription: dto.seoDescription,
+        ...(dto.imageUrl
+          ? {
+              images: {
+                create: [
+                  {
+                    url: dto.imageUrl,
+                    isPrimary: true,
+                  },
+                ],
+              },
+            }
+          : {}),
       },
       include: {
         category: true,
@@ -77,6 +111,7 @@ export class ProductsService {
 
   async findAll(query: ProductQueryDto) {
     const {
+      status,
       search,
       categoryId,
       brandId,
@@ -84,11 +119,11 @@ export class ProductsService {
       maxPrice,
       featured,
       page = 1,
-      limit = 20,
+      limit = 50,
     } = query;
 
-    const where = {
-      status: 'ACTIVE' as const,
+    const where: any = {
+      ...(status && status !== 'ALL' ? { status: status as ProductStatus } : {}),
 
       ...(search && {
         OR: [

@@ -6,21 +6,17 @@ describe('ShippingService', () => {
 	let service: ShippingService;
 
 	const mockPrismaService = {
-		shippingMethod: {
+		deliveryZone: {
 			create: jest.fn(),
 			findMany: jest.fn(),
 			findUnique: jest.fn(),
+			findFirst: jest.fn(),
 			update: jest.fn(),
 			delete: jest.fn(),
 		},
-		shipment: {
-			findFirst: jest.fn(),
-			update: jest.fn(),
-		},
 		order: {
-			update: jest.fn(),
+			count: jest.fn(),
 		},
-		$transaction: jest.fn((cb) => cb(mockPrismaService)),
 	};
 
 	beforeEach(async () => {

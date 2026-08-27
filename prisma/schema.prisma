@@ -40,8 +40,7 @@ enum InventoryMovementType {
 enum OrderStatus {
   PENDING
   CONFIRMED
-  PROCESSING
-  SHIPPED
+  IN_DELIVERY
   DELIVERED
   CANCELLED
   REFUNDED
@@ -65,14 +64,9 @@ enum PaymentProvider {
   CASH_ON_DELIVERY
 }
 
-enum ShipmentStatus {
-  PENDING
-  PROCESSING
-  SHIPPED
-  IN_TRANSIT
-  DELIVERED
-  CANCELLED
-  RETURNED
+enum FulfillmentType {
+  PICKUP
+  DELIVERY
 }
 
 enum CouponType {
@@ -92,6 +86,20 @@ enum CartStatus {
   CONVERTED
   ABANDONED
   EXPIRED
+}
+
+enum NotificationType {
+  ORDER_CREATED
+  ORDER_CONFIRMED
+  ORDER_IN_DELIVERY
+  ORDER_DELIVERED
+  ORDER_CANCELLED
+  ORDER_REFUNDED
+  PAYMENT_RECEIVED
+  LOW_STOCK
+  OUT_OF_STOCK
+  NEW_REVIEW
+  SYSTEM
 }
 
 //////////////////////////////////////////////////////
@@ -119,8 +127,10 @@ model User {
   carts     Cart[]
   orders    Order[]
   reviews   Review[]
+  notifications Notification[]
 
   refreshTokens RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
 
   @@index([email])
   @@index([role])
@@ -472,6 +482,11 @@ model Order {
   customerEmail String?
   customerPhone String
 
+  fulfillmentType FulfillmentType @default(PICKUP)
+
+  deliveryZoneId String?
+  deliveryZone   DeliveryZone? @relation(fields: [deliveryZoneId], references: [id], onDelete: SetNull)
+
   shippingFirstName String?
   shippingLastName  String?
   shippingPhone     String?
@@ -479,8 +494,6 @@ model Order {
   shippingCity      String?
   shippingRegion    String?
   shippingCountry   String  @default("SN")
-
-  billingAddress Json?
 
   couponCode String?
 
@@ -490,8 +503,6 @@ model Order {
 
   payments Payment[]
 
-  shipment Shipment?
-
   couponUsages CouponUsage[]
 
   createdAt DateTime @default(now())
@@ -500,6 +511,8 @@ model Order {
   @@index([userId])
   @@index([status])
   @@index([paymentStatus])
+  @@index([fulfillmentType])
+  @@index([deliveryZoneId])
   @@index([createdAt])
 }
 
@@ -573,41 +586,10 @@ model Payment {
 }
 
 //////////////////////////////////////////////////////
-// SHIPPING
+// DELIVERY ZONES
 //////////////////////////////////////////////////////
 
-model Shipment {
-  id String @id @default(cuid())
-
-  orderId String @unique
-  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
-
-  shippingMethodId String?
-  shippingMethod   ShippingMethod? @relation(fields: [shippingMethodId], references: [id], onDelete: SetNull)
-
-  carrier        String?
-  trackingNumber String?
-
-  status ShipmentStatus @default(PENDING)
-
-  address Json?
-
-  shippedAt   DateTime?
-  deliveredAt DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([status])
-  @@index([trackingNumber])
-  @@index([shippingMethodId])
-}
-
-//////////////////////////////////////////////////////
-// SHIPPING METHODS
-//////////////////////////////////////////////////////
-
-model ShippingMethod {
+model DeliveryZone {
   id String @id @default(cuid())
 
   name        String
@@ -615,12 +597,10 @@ model ShippingMethod {
 
   price Decimal @db.Decimal(12, 2)
 
-  estimatedMinDays Int?
-  estimatedMaxDays Int?
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
 
-  isActive Boolean @default(true)
-
-  shipments Shipment[]
+  orders Order[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -794,4 +774,54 @@ model StoreSettings {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+//////////////////////////////////////////////////////
+// NOTIFICATIONS
+//////////////////////////////////////////////////////
+
+model Notification {
+  id String @id @default(cuid())
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  type NotificationType
+
+  title       String
+  message     String
+  data Json?
+
+  isRead Boolean @default(false)
+
+  orderId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([type])
+  @@index([isRead])
+  @@index([createdAt])
+  @@index([orderId])
+}
+
+//////////////////////////////////////////////////////
+// PASSWORD RESET TOKENS
+//////////////////////////////////////////////////////
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+
+  tokenHash String    @unique
+
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }

@@ -9,7 +9,7 @@ import {
 	Min,
 } from 'class-validator';
 
-export class CreateShippingMethodDto {
+export class CreateDeliveryZoneDto {
 	@IsString()
 	@IsNotEmpty()
 	name: string;
@@ -27,13 +27,7 @@ export class CreateShippingMethodDto {
 	@IsInt()
 	@Min(0)
 	@IsOptional()
-	estimatedMinDays?: number;
-
-	@Type(() => Number)
-	@IsInt()
-	@Min(0)
-	@IsOptional()
-	estimatedMaxDays?: number;
+	sortOrder?: number;
 
 	@IsBoolean()
 	@IsOptional()

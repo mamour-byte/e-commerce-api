@@ -7,10 +7,15 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const logger = new Logger('Bootstrap');
 
-  app.use(helmet());
+  app.enableCors({
+    origin: true,
+    credentials: true,
+  });
+
+  app.use(helmet({ crossOriginResourcePolicy: false }));
   app.setGlobalPrefix('api');
   app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
+    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: false, transform: true }),
   );
 
   const port = process.env.PORT ?? 3000;

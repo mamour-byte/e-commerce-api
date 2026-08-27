@@ -98,7 +98,7 @@ export class OrdersController {
 	}
 
 	/**
-	 * Admin / Staff : Mettre à jour le statut d'une commande (ex: CONFIRMED, SHIPPED, CANCELLED)
+	 * Admin / Staff : Mettre à jour le statut d'une commande (PENDING, CONFIRMED, IN_DELIVERY, DELIVERED, CANCELLED)
 	 */
 	@Patch(':id/status')
 	@UseGuards(JwtAuthGuard, RolesGuard)

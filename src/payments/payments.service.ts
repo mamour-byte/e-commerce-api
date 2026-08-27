@@ -308,7 +308,7 @@ export class PaymentsService {
 				include: { items: true, user: true },
 			});
 			if (fullOrder) {
-				await this.mailService.sendOrderReceipt(fullOrder);
+				await this.mailService.sendPaymentConfirmation(fullOrder);
 			}
 		} catch (error) {
 			this.logger.error(`Erreur lors de l'envoi de l'email automatique pour la commande ${orderId}`, error);
