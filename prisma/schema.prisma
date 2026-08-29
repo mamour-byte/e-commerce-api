@@ -488,6 +488,9 @@ model Order {
   deliveryZoneId String?
   deliveryZone   DeliveryZone? @relation(fields: [deliveryZoneId], references: [id], onDelete: SetNull)
 
+  deliveryNeighborhoodId String?
+  deliveryNeighborhood   DeliveryNeighborhood? @relation(fields: [deliveryNeighborhoodId], references: [id], onDelete: SetNull)
+
   shippingFirstName String?
   shippingLastName  String?
   shippingPhone     String?
@@ -514,6 +517,7 @@ model Order {
   @@index([paymentStatus])
   @@index([fulfillmentType])
   @@index([deliveryZoneId])
+  @@index([deliveryNeighborhoodId])
   @@index([createdAt])
 }
 
@@ -601,10 +605,34 @@ model DeliveryZone {
   isActive  Boolean @default(true)
   sortOrder Int     @default(0)
 
+  neighborhoods DeliveryNeighborhood[]
+  orders        Order[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+//////////////////////////////////////////////////////
+// DELIVERY NEIGHBORHOODS
+//////////////////////////////////////////////////////
+
+model DeliveryNeighborhood {
+  id String @id @default(cuid())
+
+  name String
+
+  deliveryZoneId String
+  deliveryZone   DeliveryZone @relation(fields: [deliveryZoneId], references: [id], onDelete: Cascade)
+
+  isActive Boolean @default(true)
+
   orders Order[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([deliveryZoneId])
+  @@index([name])
 }
 
 //////////////////////////////////////////////////////

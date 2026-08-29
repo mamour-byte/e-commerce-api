@@ -24,6 +24,7 @@ const ORDER_INCLUDE = {
 	items: true,
 	payments: true,
 	deliveryZone: true,
+	deliveryNeighborhood: true,
 	user: {
 		select: {
 			id: true,
@@ -81,24 +82,53 @@ export class OrdersService {
 		// 3. Calcul des frais de livraison selon le mode de retrait
 		let shippingAmount = 0;
 		let deliveryZoneId: string | null = null;
+		let deliveryNeighborhoodId: string | null = null;
 
-		if (dto.fulfillmentType === FulfillmentType.DELIVERY) {
-			if (!dto.deliveryZoneId) {
-				throw new BadRequestException('Une zone de livraison est requise pour une commande en livraison.');
+		const fulfillmentType = dto.fulfillmentType || dto.deliveryMethod || FulfillmentType.PICKUP;
+		const zoneId = dto.deliveryZoneId || dto.shippingZoneId;
+		const neighborhoodId = dto.deliveryNeighborhoodId;
+
+		if (fulfillmentType === FulfillmentType.DELIVERY) {
+			if (neighborhoodId) {
+				const neighborhood = await this.prisma.deliveryNeighborhood.findFirst({
+					where: { id: neighborhoodId, isActive: true },
+					include: { deliveryZone: true },
+				});
+
+				if (!neighborhood || !neighborhood.deliveryZone || !neighborhood.deliveryZone.isActive) {
+					throw new NotFoundException('Quartier de livraison introuvable ou inactif.');
+				}
+
+				if (zoneId && zoneId !== neighborhood.deliveryZoneId) {
+					throw new BadRequestException(
+						"Le quartier sélectionné n'appartient pas à la zone de livraison indiquée.",
+					);
+				}
+
+				deliveryNeighborhoodId = neighborhood.id;
+				deliveryZoneId = neighborhood.deliveryZoneId;
+				shippingAmount = Number(neighborhood.deliveryZone.price);
+			} else if (zoneId) {
+				const zone = await this.prisma.deliveryZone.findFirst({
+					where: { id: zoneId, isActive: true },
+				});
+
+				if (!zone) {
+					throw new NotFoundException('Zone de livraison introuvable ou inactive.');
+				}
+
+				shippingAmount = Number(zone.price);
+				deliveryZoneId = zone.id;
+			} else {
+				throw new BadRequestException(
+					'Une zone ou un quartier de livraison est requis pour une commande en livraison.',
+				);
 			}
-
-			const zone = await this.prisma.deliveryZone.findFirst({
-				where: { id: dto.deliveryZoneId, isActive: true },
-			});
-
-			if (!zone) {
-				throw new NotFoundException('Zone de livraison introuvable ou inactive.');
-			}
-
-			shippingAmount = Number(zone.price);
-			deliveryZoneId = zone.id;
-		} else if (dto.deliveryZoneId) {
-			throw new BadRequestException('Une zone de livraison ne peut pas être sélectionnée pour un retrait en magasin.');
+		} else {
+			// Retrait en magasin (PICKUP) : aucun frais de livraison, zone ou quartier
+			deliveryNeighborhoodId = null;
+			deliveryZoneId = null;
+			shippingAmount = 0;
 		}
 
 		// 4. Calcul de la réduction (Coupon)
@@ -138,15 +168,16 @@ export class OrdersService {
 					currency: 'XOF',
 					customerEmail: dto.customerEmail,
 					customerPhone: dto.customerPhone,
-					fulfillmentType: dto.fulfillmentType,
+					fulfillmentType,
 					deliveryZoneId,
+					deliveryNeighborhoodId,
 					shippingFirstName: dto.shippingFirstName,
 					shippingLastName: dto.shippingLastName,
 					shippingPhone: dto.shippingPhone || dto.customerPhone,
-					shippingAddress: dto.fulfillmentType === FulfillmentType.DELIVERY ? dto.shippingAddress : null,
-					shippingCity: dto.fulfillmentType === FulfillmentType.DELIVERY ? dto.shippingCity : null,
-					shippingRegion: dto.fulfillmentType === FulfillmentType.DELIVERY ? dto.shippingRegion : null,
-					shippingCountry: dto.fulfillmentType === FulfillmentType.DELIVERY ? dto.shippingCountry || 'SN' : 'SN',
+					shippingAddress: fulfillmentType === FulfillmentType.DELIVERY ? dto.shippingAddress : null,
+					shippingCity: fulfillmentType === FulfillmentType.DELIVERY ? dto.shippingCity : null,
+					shippingRegion: fulfillmentType === FulfillmentType.DELIVERY ? dto.shippingRegion : null,
+					shippingCountry: fulfillmentType === FulfillmentType.DELIVERY ? dto.shippingCountry || 'SN' : 'SN',
 					couponCode: dto.couponCode ? dto.couponCode.toUpperCase() : null,
 					notes: dto.notes,
 					items: {

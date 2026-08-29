@@ -24,13 +24,25 @@ export class CreateOrderDto {
 	items?: CreateOrderItemDto[];
 
 	@IsEnum(FulfillmentType)
-	@IsNotEmpty()
-	fulfillmentType: FulfillmentType = FulfillmentType.PICKUP;
+	@IsOptional()
+	fulfillmentType?: FulfillmentType = FulfillmentType.PICKUP;
 
-	@ValidateIf((dto) => dto.fulfillmentType === FulfillmentType.DELIVERY)
+	@IsEnum(FulfillmentType)
+	@IsOptional()
+	deliveryMethod?: FulfillmentType;
+
+	@ValidateIf((dto) => (dto.fulfillmentType === FulfillmentType.DELIVERY || dto.deliveryMethod === FulfillmentType.DELIVERY) && !dto.deliveryNeighborhoodId)
 	@IsString()
 	@IsNotEmpty()
 	deliveryZoneId?: string;
+
+	@IsString()
+	@IsOptional()
+	shippingZoneId?: string;
+
+	@IsString()
+	@IsOptional()
+	deliveryNeighborhoodId?: string;
 
 	@IsEmail()
 	@IsOptional()

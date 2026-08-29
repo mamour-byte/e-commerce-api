@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+	IsArray,
 	IsBoolean,
 	IsInt,
 	IsNotEmpty,
@@ -32,4 +33,9 @@ export class CreateDeliveryZoneDto {
 	@IsBoolean()
 	@IsOptional()
 	isActive?: boolean = true;
+
+	@IsArray()
+	@IsString({ each: true })
+	@IsOptional()
+	neighborhoods?: string[];
 }
