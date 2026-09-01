@@ -112,7 +112,7 @@ export class NotificationsService {
   }
 
   async notifyOrderConfirmed(orderId: string, orderNumber: string, userId?: string) {
-    const notification = await this.create({
+    return this.create({
       userId,
       type: NotificationType.ORDER_CONFIRMED,
       title: 'Commande confirmée',
@@ -120,16 +120,10 @@ export class NotificationsService {
       data: { orderNumber },
       orderId,
     });
-
-    if (userId) {
-      this.gateway.sendToUser(userId, notification);
-    }
-
-    return notification;
   }
 
   async notifyOrderInDelivery(orderId: string, orderNumber: string, userId?: string) {
-    const notification = await this.create({
+    return this.create({
       userId,
       type: NotificationType.ORDER_IN_DELIVERY,
       title: 'Commande en livraison',
@@ -137,16 +131,10 @@ export class NotificationsService {
       data: { orderNumber },
       orderId,
     });
-
-    if (userId) {
-      this.gateway.sendToUser(userId, notification);
-    }
-
-    return notification;
   }
 
   async notifyOrderDelivered(orderId: string, orderNumber: string, userId?: string) {
-    const notification = await this.create({
+    return this.create({
       userId,
       type: NotificationType.ORDER_DELIVERED,
       title: 'Commande livrée',
@@ -154,16 +142,10 @@ export class NotificationsService {
       data: { orderNumber },
       orderId,
     });
-
-    if (userId) {
-      this.gateway.sendToUser(userId, notification);
-    }
-
-    return notification;
   }
 
   async notifyOrderCancelled(orderId: string, orderNumber: string, userId?: string) {
-    const notification = await this.create({
+    return this.create({
       userId,
       type: NotificationType.ORDER_CANCELLED,
       title: 'Commande annulée',
@@ -171,16 +153,10 @@ export class NotificationsService {
       data: { orderNumber },
       orderId,
     });
-
-    if (userId) {
-      this.gateway.sendToUser(userId, notification);
-    }
-
-    return notification;
   }
 
   async notifyPaymentReceived(orderId: string, orderNumber: string, userId?: string) {
-    const notification = await this.create({
+    return this.create({
       userId,
       type: NotificationType.PAYMENT_RECEIVED,
       title: 'Paiement reçu',
@@ -188,12 +164,6 @@ export class NotificationsService {
       data: { orderNumber },
       orderId,
     });
-
-    if (userId) {
-      this.gateway.sendToUser(userId, notification);
-    }
-
-    return notification;
   }
 
   async notifyLowStock(productId: string, productName: string, stock: number) {
