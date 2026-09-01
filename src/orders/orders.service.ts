@@ -712,11 +712,11 @@ export class OrdersService {
       // - un panier rattaché à un compte appartient à ce compte ;
       // - un panier invité doit matcher la session fournie.
       if (dto.cartId) {
-        if (cart.userId) {
+        if (cart.userId && userId) {
           if (cart.userId !== userId) {
             throw new ForbiddenException('Ce panier ne vous appartient pas.');
           }
-        } else if (!dto.sessionId || cart.sessionId !== dto.sessionId) {
+        } else if (!cart.userId && (!dto.sessionId || cart.sessionId !== dto.sessionId)) {
           throw new ForbiddenException('Session du panier invalide.');
         }
       }
