@@ -19,7 +19,8 @@ const CART_INCLUDE = {
 					name: true,
 					slug: true,
 					status: true,
-					stock: true,
+					quantity: true,
+					trackInventory: true,
 					price: true,
 					images: {
 						where: { isPrimary: true },
@@ -33,7 +34,8 @@ const CART_INCLUDE = {
 					sku: true,
 					name: true,
 					price: true,
-					stock: true,
+					quantity: true,
+					trackInventory: true,
 					isActive: true,
 				},
 			},
@@ -80,16 +82,28 @@ export class CartService {
 		});
 		if (!product) throw new NotFoundException('Produit introuvable ou inactif.');
 
+		const tracksInventory = dto.variantId
+			? ((await this.prisma.productVariant.findFirst({
+					where: {
+						id: dto.variantId,
+						productId: dto.productId,
+						isActive: true,
+					},
+				}))?.trackInventory ?? false)
+			: product.trackInventory;
+
 		if (dto.variantId) {
 			const variant = await this.prisma.productVariant.findFirst({
 				where: { id: dto.variantId, productId: dto.productId, isActive: true },
 			});
 			if (!variant) throw new NotFoundException('Variante introuvable ou inactive.');
-			const available = variant.stock - variant.reservedStock;
-			if (dto.quantity > available)
-				throw new BadRequestException(`Stock insuffisant. Disponible : ${available}`);
-		} else {
-			const available = product.stock - product.reservedStock;
+			if (tracksInventory) {
+				const available = variant.quantity;
+				if (dto.quantity > available)
+					throw new BadRequestException(`Stock insuffisant. Disponible : ${available}`);
+			}
+		} else if (tracksInventory) {
+			const available = product.quantity;
 			if (dto.quantity > available)
 				throw new BadRequestException(`Stock insuffisant. Disponible : ${available}`);
 		}
@@ -143,8 +157,8 @@ export class CartService {
 				: await tx.product.findUnique({ where: { id: item.productId } });
 
 			if (source) {
-				const available = source.stock - source.reservedStock;
-				if (dto.quantity > available)
+				const available = source.quantity;
+				if (source.trackInventory && dto.quantity > available)
 					throw new BadRequestException(`Stock insuffisant. Disponible : ${available}`);
 			}
 

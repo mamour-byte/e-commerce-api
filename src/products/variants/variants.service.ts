@@ -25,16 +25,26 @@ export class VariantsService {
     const existing = await this.prisma.productVariant.findUnique({ where: { sku: dto.sku } });
     if (existing) throw new ConflictException('Ce SKU est déjà utilisé.');
 
-    return this.prisma.productVariant.create({
+    const variant = await this.prisma.productVariant.create({
       data: {
         productId,
         sku: dto.sku,
         name: dto.name,
         price: dto.price,
-        stock: dto.stock ?? 0,
+        quantity: dto.quantity ?? 0,
+        trackInventory: dto.trackInventory ?? true,
         attributes: dto.attributes,
       },
     });
+
+    await this.prisma.product.update({
+      where: { id: productId },
+      data: { hasVariants: true },
+    });
+
+    await this.syncParentStock(productId);
+
+    return variant;
   }
 
   async findByProduct(productId: string) {
@@ -60,22 +70,61 @@ export class VariantsService {
       if (existing) throw new ConflictException('Ce SKU est déjà utilisé.');
     }
 
-    const { sku, name, price, stock, attributes } = dto;
+    const { sku, name, price, quantity, trackInventory, attributes } = dto;
 
-    return this.prisma.productVariant.update({
+    const variant = await this.prisma.productVariant.update({
       where: { id },
       data: {
         ...(sku !== undefined && { sku }),
         ...(name !== undefined && { name }),
         ...(price !== undefined && { price }),
-        ...(stock !== undefined && { stock }),
+        ...(quantity !== undefined && { quantity }),
+        ...(trackInventory !== undefined && { trackInventory }),
         ...(attributes !== undefined && { attributes }),
       },
     });
+
+    if (quantity !== undefined) {
+      await this.syncParentStock(variant.productId);
+    }
+
+    return variant;
   }
 
   async remove(id: string) {
-    await this.findOne(id);
-    return this.prisma.productVariant.delete({ where: { id } });
+    const variant = await this.findOne(id);
+    const deleted = await this.prisma.productVariant.delete({ where: { id } });
+
+    const remainingCount = await this.prisma.productVariant.count({
+      where: { productId: variant.productId },
+    });
+
+    if (remainingCount === 0) {
+      await this.prisma.product.update({
+        where: { id: variant.productId },
+        data: { hasVariants: false },
+      });
+    } else {
+      await this.syncParentStock(variant.productId);
+    }
+
+    return deleted;
+  }
+
+  // Garde le champ `quantity` du produit parent synchronisé avec la somme
+  // des quantités de ses variantes, pour que `product.quantity` reflète
+  // toujours le stock réel vendable.
+  private async syncParentStock(productId: string): Promise<void> {
+    const aggregate = await this.prisma.productVariant.aggregate({
+      where: { productId },
+      _sum: { quantity: true },
+    });
+
+    await this.prisma.product.update({
+      where: { id: productId },
+      data: {
+        quantity: aggregate._sum.quantity ?? 0,
+      },
+    });
   }
 }

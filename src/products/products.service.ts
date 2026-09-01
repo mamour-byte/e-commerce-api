@@ -9,14 +9,24 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductQueryDto } from './dto/product-query.dto';
-import { ProductStatus } from '@prisma/client';
+import { Prisma, ProductStatus, UserRole } from '@prisma/client';
+
+function isStaffRole(role?: UserRole): boolean {
+  return role === UserRole.ADMIN || role === UserRole.STAFF;
+}
 
 @Injectable()
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateProductDto) {
-    let slug = dto.slug || dto.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+    let slug =
+      dto.slug ||
+      dto.name
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)+/g, '');
     if (!slug) {
       slug = `product-${Date.now()}`;
     }
@@ -26,14 +36,14 @@ export class ProductsService {
     });
 
     if (existingSlug) {
-      if (dto.slug) {
+      if (dto.slug != null && dto.slug !== '') {
         throw new ConflictException('Un produit avec ce slug existe déjà.');
       } else {
         slug = `${slug}-${Math.floor(100 + Math.random() * 900)}`;
       }
     }
 
-    if (dto.sku) {
+    if (dto.sku != null && dto.sku !== '') {
       const existingSku = await this.prisma.product.findUnique({
         where: {
           sku: dto.sku,
@@ -41,23 +51,29 @@ export class ProductsService {
       });
 
       if (existingSku) {
-        throw new ConflictException(
-          'Un produit avec ce SKU existe déjà.',
-        );
+        throw new ConflictException('Un produit avec ce SKU existe déjà.');
       }
     }
 
-    let categoryId = dto.categoryId && dto.categoryId.trim() !== '' ? dto.categoryId : undefined;
+    let categoryId =
+      dto.categoryId && dto.categoryId.trim() !== ''
+        ? dto.categoryId
+        : undefined;
     if (categoryId) {
-      const catExists = await this.prisma.category.findUnique({ where: { id: categoryId } });
+      const catExists = await this.prisma.category.findUnique({
+        where: { id: categoryId },
+      });
       if (!catExists) {
         categoryId = undefined;
       }
     }
 
-    let brandId = dto.brandId && dto.brandId.trim() !== '' ? dto.brandId : undefined;
+    let brandId =
+      dto.brandId && dto.brandId.trim() !== '' ? dto.brandId : undefined;
     if (brandId) {
-      const brandExists = await this.prisma.brand.findUnique({ where: { id: brandId } });
+      const brandExists = await this.prisma.brand.findUnique({
+        where: { id: brandId },
+      });
       if (!brandExists) {
         brandId = undefined;
       }
@@ -67,7 +83,7 @@ export class ProductsService {
       data: {
         name: dto.name,
         slug,
-        sku: dto.sku,
+        sku: dto.sku || null,
 
         description: dto.description,
         shortDescription: dto.shortDescription,
@@ -76,8 +92,8 @@ export class ProductsService {
         compareAtPrice: dto.compareAtPrice,
         costPrice: dto.costPrice,
 
-        stock: dto.stock ?? 0,
-        lowStockThreshold: dto.lowStockThreshold ?? 5,
+        quantity: dto.quantity ?? 0,
+        trackInventory: dto.trackInventory ?? true,
 
         status: dto.status,
         isFeatured: dto.isFeatured ?? false,
@@ -109,7 +125,7 @@ export class ProductsService {
     });
   }
 
-  async findAll(query: ProductQueryDto) {
+  async findAll(query: ProductQueryDto, viewerRole?: UserRole) {
     const {
       status,
       search,
@@ -122,8 +138,17 @@ export class ProductsService {
       limit = 50,
     } = query;
 
-    const where: any = {
-      ...(status && status !== 'ALL' ? { status: status as ProductStatus } : {}),
+    const isStaff = isStaffRole(viewerRole);
+
+    const where: Prisma.ProductWhereInput = {
+      // Le catalogue public n'expose que les produits ACTIVE.
+      // Seuls ADMIN/STAFF peuvent filtrer sur tous les statuts (DRAFT…).
+      status:
+        status && status !== 'ALL'
+          ? (status as ProductStatus)
+          : isStaff
+            ? undefined
+            : ProductStatus.ACTIVE,
 
       ...(search && {
         OR: [
@@ -176,6 +201,8 @@ export class ProductsService {
         skip,
         take: limit,
 
+        omit: isStaff ? undefined : { costPrice: true },
+
         include: {
           images: {
             orderBy: {
@@ -184,6 +211,7 @@ export class ProductsService {
           },
           category: true,
           brand: true,
+          variants: true,
         },
 
         orderBy: {
@@ -208,9 +236,19 @@ export class ProductsService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, viewerRole?: UserRole) {
+    const isStaff = isStaffRole(viewerRole);
+
     const product = await this.prisma.product.findFirst({
-      where: { id, status: { not: 'ARCHIVED' } },
+      where: {
+        id,
+        ...(isStaff
+          ? { status: { not: 'ARCHIVED' } }
+          : { status: ProductStatus.ACTIVE }),
+      },
+
+      omit: isStaff ? undefined : { costPrice: true },
+
       include: {
         category: true,
         brand: true,
@@ -227,9 +265,19 @@ export class ProductsService {
     return product;
   }
 
-  async findBySlug(slug: string) {
+  async findBySlug(slug: string, viewerRole?: UserRole) {
+    const isStaff = isStaffRole(viewerRole);
+
     const product = await this.prisma.product.findFirst({
-      where: { slug, status: { not: 'ARCHIVED' } },
+      where: {
+        slug,
+        ...(isStaff
+          ? { status: { not: 'ARCHIVED' } }
+          : { status: ProductStatus.ACTIVE }),
+      },
+
+      omit: isStaff ? undefined : { costPrice: true },
+
       include: {
         category: true,
         brand: true,
@@ -243,32 +291,55 @@ export class ProductsService {
   }
 
   async update(id: string, dto: UpdateProductDto) {
-    await this.findOne(id);
+    await this.findOne(id, UserRole.ADMIN);
 
     if (dto.slug) {
       const existingSlug = await this.prisma.product.findFirst({
         where: { slug: dto.slug, NOT: { id } },
       });
-      if (existingSlug) throw new ConflictException('Ce slug est déjà utilisé.');
+      if (existingSlug)
+        throw new ConflictException('Ce slug est déjà utilisé.');
     }
 
-    const { name, slug, sku, description, shortDescription, price,
-      compareAtPrice, costPrice, stock, lowStockThreshold, status,
-      isFeatured, categoryId, brandId, seoTitle, seoDescription } = dto;
+    if (dto.sku != null && dto.sku !== '') {
+      const existingSku = await this.prisma.product.findFirst({
+        where: { sku: dto.sku, NOT: { id } },
+      });
+      if (existingSku) throw new ConflictException('Ce SKU est déjà utilisé.');
+    }
+
+    const {
+      name,
+      slug,
+      sku,
+      description,
+      shortDescription,
+      price,
+      compareAtPrice,
+      costPrice,
+      quantity,
+      trackInventory,
+      status,
+      isFeatured,
+      categoryId,
+      brandId,
+      seoTitle,
+      seoDescription,
+    } = dto;
 
     return this.prisma.product.update({
       where: { id },
       data: {
         ...(name !== undefined && { name }),
         ...(slug !== undefined && { slug }),
-        ...(sku !== undefined && { sku }),
+        ...(sku !== undefined && { sku: sku || null }),
         ...(description !== undefined && { description }),
         ...(shortDescription !== undefined && { shortDescription }),
         ...(price !== undefined && { price }),
         ...(compareAtPrice !== undefined && { compareAtPrice }),
         ...(costPrice !== undefined && { costPrice }),
-        ...(stock !== undefined && { stock }),
-        ...(lowStockThreshold !== undefined && { lowStockThreshold }),
+        ...(quantity !== undefined && { quantity }),
+        ...(trackInventory !== undefined && { trackInventory }),
         ...(status !== undefined && { status }),
         ...(isFeatured !== undefined && { isFeatured }),
         ...(categoryId !== undefined && { categoryId }),
@@ -286,7 +357,7 @@ export class ProductsService {
   }
 
   async remove(id: string) {
-    await this.findOne(id);
+    await this.findOne(id, UserRole.ADMIN);
 
     return this.prisma.product.update({
       where: {

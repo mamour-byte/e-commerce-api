@@ -2,6 +2,7 @@ import {
 	Body,
 	Controller,
 	Get,
+	Headers,
 	HttpCode,
 	HttpStatus,
 	Param,
@@ -36,8 +37,9 @@ export class OrdersController {
 	create(
 		@Body() dto: CreateOrderDto,
 		@CurrentUser() user: AuthUser | null,
+		@Headers('x-session-id') sessionId?: string,
 	) {
-		return this.ordersService.create(user?.id || null, dto);
+		return this.ordersService.create(user?.id || null, dto, sessionId);
 	}
 
 	/**

@@ -1,317 +1,375 @@
 import {
-	BadRequestException,
-	Injectable,
-	Logger,
-	NotFoundException,
-	UnauthorizedException,
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { OrderStatus, PaymentProvider, PaymentStatus } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
 import { OrangeMoneyService } from './providers/orange-money.service';
 import { WaveService } from './providers/wave.service';
 import { MailService } from '../mail/mail.service';
 
+function secureCompare(a: string, b: string): boolean {
+  const aHash = createHash('sha256').update(a).digest();
+  const bHash = createHash('sha256').update(b).digest();
+  return timingSafeEqual(aHash, bHash);
+}
+
 @Injectable()
 export class PaymentsService {
-	private readonly logger = new Logger(PaymentsService.name);
+  private readonly logger = new Logger(PaymentsService.name);
 
-	constructor(
-		private readonly prisma: PrismaService,
-		private readonly waveService: WaveService,
-		private readonly orangeMoneyService: OrangeMoneyService,
-		private readonly mailService: MailService,
-	) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly waveService: WaveService,
+    private readonly orangeMoneyService: OrangeMoneyService,
+    private readonly mailService: MailService,
+    private readonly config: ConfigService,
+  ) {}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// INITIALISATION D'UN PAIEMENT
-	// ─────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // INITIALISATION D'UN PAIEMENT
+  // ─────────────────────────────────────────────────────────────────────────
 
-	async initiatePayment(userId: string | null, dto: InitiatePaymentDto) {
-		const order = await this.prisma.order.findUnique({
-			where: { id: dto.orderId },
-		});
+  async initiatePayment(userId: string | null, dto: InitiatePaymentDto) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: dto.orderId },
+    });
 
-		if (!order) {
-			throw new NotFoundException('Commande introuvable.');
-		}
+    if (!order) {
+      throw new NotFoundException('Commande introuvable.');
+    }
 
-		if (order.paymentStatus === PaymentStatus.PAID) {
-			throw new BadRequestException('Cette commande a déjà été payée.');
-		}
+    // Vérification d'appartenance : une commande rattachée à un compte
+    // ne peut être payée que par son propriétaire.
+    if (order.userId) {
+      if (!userId || order.userId !== userId) {
+        throw new ForbiddenException('Cette commande ne vous appartient pas.');
+      }
+    } else if (userId) {
+      throw new ForbiddenException('Cette commande ne vous appartient pas.');
+    }
 
-		if (order.status === OrderStatus.CANCELLED || order.status === OrderStatus.REFUNDED) {
-			throw new BadRequestException(`Impossible d'initier un paiement pour une commande ${order.status.toLowerCase()}.`);
-		}
+    if (order.paymentStatus === PaymentStatus.PAID) {
+      throw new BadRequestException('Cette commande a déjà été payée.');
+    }
 
-		const amount = Number(order.total);
-		const currency = order.currency;
+    if (
+      order.status === OrderStatus.CANCELLED ||
+      order.status === OrderStatus.REFUNDED
+    ) {
+      throw new BadRequestException(
+        `Impossible d'initier un paiement pour une commande ${order.status.toLowerCase()}.`,
+      );
+    }
 
-		switch (dto.provider) {
-			case PaymentProvider.WAVE: {
-				const waveSession = await this.waveService.createCheckoutSession({
-					amount,
-					currency,
-					orderNumber: order.orderNumber,
-					orderId: order.id,
-				});
+    const amount = Number(order.total);
+    const currency = order.currency;
 
-				const payment = await this.prisma.payment.create({
-					data: {
-						orderId: order.id,
-						provider: PaymentProvider.WAVE,
-						amount: order.total,
-						currency,
-						status: PaymentStatus.PENDING,
-						transactionId: waveSession.id,
-						providerReference: waveSession.client_reference || order.orderNumber,
-						metadata: {
-							wave_launch_url: waveSession.wave_launch_url,
-							checkout_status: waveSession.checkout_status,
-						},
-					},
-				});
+    switch (dto.provider) {
+      case PaymentProvider.WAVE: {
+        const waveSession = await this.waveService.createCheckoutSession({
+          amount,
+          currency,
+          orderNumber: order.orderNumber,
+          orderId: order.id,
+        });
 
-				await this.prisma.order.update({
-					where: { id: order.id },
-					data: { paymentStatus: PaymentStatus.PROCESSING },
-				});
+        const payment = await this.prisma.payment.create({
+          data: {
+            orderId: order.id,
+            provider: PaymentProvider.WAVE,
+            amount: order.total,
+            currency,
+            status: PaymentStatus.PENDING,
+            transactionId: waveSession.id,
+            providerReference:
+              waveSession.client_reference || order.orderNumber,
+            metadata: {
+              wave_launch_url: waveSession.wave_launch_url,
+              checkout_status: waveSession.checkout_status,
+            },
+          },
+        });
 
-				return {
-					paymentId: payment.id,
-					provider: PaymentProvider.WAVE,
-					paymentUrl: waveSession.wave_launch_url,
-					status: payment.status,
-					amount,
-					currency,
-				};
-			}
+        await this.prisma.order.update({
+          where: { id: order.id },
+          data: { paymentStatus: PaymentStatus.PROCESSING },
+        });
 
-			case PaymentProvider.ORANGE_MONEY: {
-				const omResponse = await this.orangeMoneyService.initiateWebPayment({
-					amount,
-					currency,
-					orderNumber: order.orderNumber,
-					orderId: order.id,
-				});
+        return {
+          paymentId: payment.id,
+          provider: PaymentProvider.WAVE,
+          paymentUrl: waveSession.wave_launch_url,
+          status: payment.status,
+          amount,
+          currency,
+        };
+      }
 
-				const payment = await this.prisma.payment.create({
-					data: {
-						orderId: order.id,
-						provider: PaymentProvider.ORANGE_MONEY,
-						amount: order.total,
-						currency,
-						status: PaymentStatus.PENDING,
-						transactionId: omResponse.pay_token,
-						providerReference: omResponse.notif_token || order.orderNumber,
-						metadata: {
-							payment_url: omResponse.payment_url,
-							pay_token: omResponse.pay_token,
-						},
-					},
-				});
+      case PaymentProvider.ORANGE_MONEY: {
+        const omResponse = await this.orangeMoneyService.initiateWebPayment({
+          amount,
+          currency,
+          orderNumber: order.orderNumber,
+          orderId: order.id,
+        });
 
-				await this.prisma.order.update({
-					where: { id: order.id },
-					data: { paymentStatus: PaymentStatus.PROCESSING },
-				});
+        const payment = await this.prisma.payment.create({
+          data: {
+            orderId: order.id,
+            provider: PaymentProvider.ORANGE_MONEY,
+            amount: order.total,
+            currency,
+            status: PaymentStatus.PENDING,
+            transactionId: omResponse.pay_token,
+            providerReference: omResponse.notif_token || order.orderNumber,
+            metadata: {
+              payment_url: omResponse.payment_url,
+              pay_token: omResponse.pay_token,
+            },
+          },
+        });
 
-				return {
-					paymentId: payment.id,
-					provider: PaymentProvider.ORANGE_MONEY,
-					paymentUrl: omResponse.payment_url,
-					status: payment.status,
-					amount,
-					currency,
-				};
-			}
+        await this.prisma.order.update({
+          where: { id: order.id },
+          data: { paymentStatus: PaymentStatus.PROCESSING },
+        });
 
-			case PaymentProvider.CASH_ON_DELIVERY: {
-				const payment = await this.prisma.payment.create({
-					data: {
-						orderId: order.id,
-						provider: PaymentProvider.CASH_ON_DELIVERY,
-						amount: order.total,
-						currency,
-						status: PaymentStatus.PENDING,
-						metadata: {
-							note: 'Paiement en espèces à la livraison',
-							customerPhone: dto.customerPhoneNumber || order.customerPhone,
-						},
-					},
-				});
+        return {
+          paymentId: payment.id,
+          provider: PaymentProvider.ORANGE_MONEY,
+          paymentUrl: omResponse.payment_url,
+          status: payment.status,
+          amount,
+          currency,
+        };
+      }
 
-				await this.prisma.order.update({
-					where: { id: order.id },
-					data: {
-						paymentStatus: PaymentStatus.PENDING,
-						status: OrderStatus.CONFIRMED, // Commande confirmée pour préparation de livraison
-					},
-				});
+      case PaymentProvider.CASH_ON_DELIVERY: {
+        const payment = await this.prisma.payment.create({
+          data: {
+            orderId: order.id,
+            provider: PaymentProvider.CASH_ON_DELIVERY,
+            amount: order.total,
+            currency,
+            status: PaymentStatus.PENDING,
+            metadata: {
+              note: 'Paiement en espèces à la livraison',
+              customerPhone: dto.customerPhoneNumber || order.customerPhone,
+            },
+          },
+        });
 
-				return {
-					paymentId: payment.id,
-					provider: PaymentProvider.CASH_ON_DELIVERY,
-					paymentUrl: null,
-					status: payment.status,
-					amount,
-					currency,
-					message: 'Commande enregistrée avec succès. Le paiement sera effectué en espèces à la livraison.',
-				};
-			}
+        await this.prisma.order.update({
+          where: { id: order.id },
+          data: {
+            paymentStatus: PaymentStatus.PENDING,
+            status: OrderStatus.CONFIRMED, // Commande confirmée pour préparation de livraison
+          },
+        });
 
-			default:
-				throw new BadRequestException(`Fournisseur de paiement "${dto.provider}" non pris en charge.`);
-		}
-	}
+        return {
+          paymentId: payment.id,
+          provider: PaymentProvider.CASH_ON_DELIVERY,
+          paymentUrl: null,
+          status: payment.status,
+          amount,
+          currency,
+          message:
+            'Commande enregistrée avec succès. Le paiement sera effectué en espèces à la livraison.',
+        };
+      }
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// WEBHOOK WAVE
-	// ─────────────────────────────────────────────────────────────────────────
+      default:
+        throw new BadRequestException(
+          `Fournisseur de paiement "${dto.provider}" non pris en charge.`,
+        );
+    }
+  }
 
-	async handleWaveWebhook(signature: string, rawBody: string, payload: any) {
-		const isValid = this.waveService.verifyWebhookSignature(signature, rawBody);
-		if (!isValid) {
-			this.logger.error('Signature Wave Webhook invalide');
-			throw new UnauthorizedException('Signature Webhook invalide.');
-		}
+  // ─────────────────────────────────────────────────────────────────────────
+  // WEBHOOK WAVE
+  // ─────────────────────────────────────────────────────────────────────────
 
-		this.logger.log(`Webhook Wave reçu : ${JSON.stringify(payload)}`);
+  async handleWaveWebhook(signature: string, rawBody: string, payload: any) {
+    const isValid = this.waveService.verifyWebhookSignature(signature, rawBody);
+    if (!isValid) {
+      this.logger.error('Signature Wave Webhook invalide');
+      throw new UnauthorizedException('Signature Webhook invalide.');
+    }
 
-		const eventType = payload.type || payload.event;
-		const data = payload.data || payload;
+    this.logger.log(`Webhook Wave reçu : ${JSON.stringify(payload)}`);
 
-		if (eventType === 'checkout.session.completed') {
-			const transactionId = data.id;
-			const clientReference = data.client_reference;
+    const eventType = payload.type || payload.event;
+    const data = payload.data || payload;
 
-			const payment = await this.prisma.payment.findFirst({
-				where: {
-					OR: [
-						{ transactionId },
-						{ providerReference: clientReference },
-						{ order: { orderNumber: clientReference } },
-					],
-				},
-				include: { order: true },
-			});
+    if (eventType === 'checkout.session.completed') {
+      const transactionId = data.id;
+      const clientReference = data.client_reference;
 
-			if (payment && payment.status !== PaymentStatus.PAID) {
-				await this.confirmPayment(payment.id, payment.orderId, 'Wave Webhook');
-			}
-		}
+      const payment = await this.prisma.payment.findFirst({
+        where: {
+          OR: [
+            { transactionId },
+            { providerReference: clientReference },
+            { order: { orderNumber: clientReference } },
+          ],
+        },
+        include: { order: true },
+      });
 
-		return { received: true };
-	}
+      if (payment && payment.status !== PaymentStatus.PAID) {
+        await this.confirmPayment(payment.id, payment.orderId, 'Wave Webhook');
+      }
+    }
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// WEBHOOK ORANGE MONEY
-	// ─────────────────────────────────────────────────────────────────────────
+    return { received: true };
+  }
 
-	async handleOrangeMoneyWebhook(payload: any) {
-		this.logger.log(`Webhook Orange Money reçu : ${JSON.stringify(payload)}`);
+  // ─────────────────────────────────────────────────────────────────────────
+  // WEBHOOK ORANGE MONEY
+  // ─────────────────────────────────────────────────────────────────────────
 
-		const status = payload.status || payload.status_payment;
-		const orderIdRef = payload.order_id || payload.reference;
-		const payToken = payload.pay_token || payload.notif_token || payload.txnid;
+  async handleOrangeMoneyWebhook(payload: any, signature?: string) {
+    // Fail-closed : tant que les webhooks OM ne sont pas configurés
+    // (ORANGE_MONEY_WEBHOOK_SECRET absent), aucun webhook n'est accepté.
+    const secret = this.config.get<string>('ORANGE_MONEY_WEBHOOK_SECRET');
+    if (!secret) {
+      this.logger.error('Webhook Orange Money refusé : secret non configuré.');
+      throw new UnauthorizedException('Webhook non configuré.');
+    }
+    if (!signature || !secureCompare(signature, secret)) {
+      this.logger.error('Webhook Orange Money refusé : signature invalide.');
+      throw new UnauthorizedException('Signature Webhook invalide.');
+    }
 
-		if (status === 'SUCCESS' || status === 'PAID' || status === '00' || status === 'SUCCESSFUL') {
-			const payment = await this.prisma.payment.findFirst({
-				where: {
-					OR: [
-						{ transactionId: payToken },
-						{ providerReference: payToken },
-						{ order: { orderNumber: orderIdRef } },
-					],
-				},
-				include: { order: true },
-			});
+    this.logger.log(`Webhook Orange Money reçu : ${JSON.stringify(payload)}`);
 
-			if (payment && payment.status !== PaymentStatus.PAID) {
-				await this.confirmPayment(payment.id, payment.orderId, 'Orange Money Webhook');
-			}
-		}
+    const status = payload.status || payload.status_payment;
+    const orderIdRef = payload.order_id || payload.reference;
+    const payToken = payload.pay_token || payload.notif_token || payload.txnid;
 
-		return { status: 'OK' };
-	}
+    if (
+      status === 'SUCCESS' ||
+      status === 'PAID' ||
+      status === '00' ||
+      status === 'SUCCESSFUL'
+    ) {
+      const payment = await this.prisma.payment.findFirst({
+        where: {
+          OR: [
+            { transactionId: payToken },
+            { providerReference: payToken },
+            { order: { orderNumber: orderIdRef } },
+          ],
+        },
+        include: { order: true },
+      });
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// CONSULTATION DES PAIEMENTS
-	// ─────────────────────────────────────────────────────────────────────────
+      if (payment && payment.status !== PaymentStatus.PAID) {
+        await this.confirmPayment(
+          payment.id,
+          payment.orderId,
+          'Orange Money Webhook',
+        );
+      }
+    }
 
-	async findByOrder(orderId: string, userId?: string) {
-		const order = await this.prisma.order.findFirst({
-			where: {
-				id: orderId,
-				...(userId ? { userId } : {}),
-			},
-		});
+    return { status: 'OK' };
+  }
 
-		if (!order) {
-			throw new NotFoundException('Commande introuvable.');
-		}
+  // ─────────────────────────────────────────────────────────────────────────
+  // CONSULTATION DES PAIEMENTS
+  // ─────────────────────────────────────────────────────────────────────────
 
-		return this.prisma.payment.findMany({
-			where: { orderId: order.id },
-			orderBy: { createdAt: 'desc' },
-		});
-	}
+  async findByOrder(orderId: string, userId?: string) {
+    // Un utilisateur connecté ne voit que ses propres commandes ;
+    // un invité ne voit que les commandes invitées (userId null).
+    const order = await this.prisma.order.findFirst({
+      where: userId ? { id: orderId, userId } : { id: orderId, userId: null },
+    });
 
-	async findOne(id: string) {
-		const payment = await this.prisma.payment.findUnique({
-			where: { id },
-			include: { order: true },
-		});
+    if (!order) {
+      throw new NotFoundException('Commande introuvable.');
+    }
 
-		if (!payment) {
-			throw new NotFoundException('Enregistrement de paiement introuvable.');
-		}
+    return this.prisma.payment.findMany({
+      where: { orderId: order.id },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
 
-		return payment;
-	}
+  async findOne(id: string) {
+    const payment = await this.prisma.payment.findUnique({
+      where: { id },
+      include: { order: true },
+    });
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// FONCTIONS PRIVEES
-	// ─────────────────────────────────────────────────────────────────────────
+    if (!payment) {
+      throw new NotFoundException('Enregistrement de paiement introuvable.');
+    }
 
-	private async confirmPayment(paymentId: string, orderId: string, source: string) {
-		await this.prisma.$transaction(async (tx) => {
-			// Marquer le paiement comme PAID
-			await tx.payment.update({
-				where: { id: paymentId },
-				data: {
-					status: PaymentStatus.PAID,
-					paidAt: new Date(),
-					metadata: {
-						confirmationSource: source,
-						confirmedAt: new Date().toISOString(),
-					},
-				},
-			});
+    return payment;
+  }
 
-			// Mettre à jour la commande associée
-			await tx.order.update({
-				where: { id: orderId },
-				data: {
-					paymentStatus: PaymentStatus.PAID,
-					status: OrderStatus.CONFIRMED,
-				},
-			});
-		});
+  // ─────────────────────────────────────────────────────────────────────────
+  // FONCTIONS PRIVEES
+  // ─────────────────────────────────────────────────────────────────────────
 
-		this.logger.log(`Paiement ${paymentId} pour la commande ${orderId} confirmé via ${source}`);
+  private async confirmPayment(
+    paymentId: string,
+    orderId: string,
+    source: string,
+  ) {
+    await this.prisma.$transaction(async (tx) => {
+      // Marquer le paiement comme PAID
+      await tx.payment.update({
+        where: { id: paymentId },
+        data: {
+          status: PaymentStatus.PAID,
+          paidAt: new Date(),
+          metadata: {
+            confirmationSource: source,
+            confirmedAt: new Date().toISOString(),
+          },
+        },
+      });
 
-		// Envoi automatique de l'email de reçu de paiement
-		try {
-			const fullOrder = await this.prisma.order.findUnique({
-				where: { id: orderId },
-				include: { items: true, user: true },
-			});
-			if (fullOrder) {
-				await this.mailService.sendPaymentConfirmation(fullOrder);
-			}
-		} catch (error) {
-			this.logger.error(`Erreur lors de l'envoi de l'email automatique pour la commande ${orderId}`, error);
-		}
-	}
+      // Mettre à jour la commande associée
+      await tx.order.update({
+        where: { id: orderId },
+        data: {
+          paymentStatus: PaymentStatus.PAID,
+          status: OrderStatus.CONFIRMED,
+        },
+      });
+    });
+
+    this.logger.log(
+      `Paiement ${paymentId} pour la commande ${orderId} confirmé via ${source}`,
+    );
+
+    // Envoi automatique de l'email de reçu de paiement
+    try {
+      const fullOrder = await this.prisma.order.findUnique({
+        where: { id: orderId },
+        include: { items: true, user: true },
+      });
+      if (fullOrder) {
+        await this.mailService.sendPaymentConfirmation(fullOrder);
+      }
+    } catch (error) {
+      this.logger.error(
+        `Erreur lors de l'envoi de l'email automatique pour la commande ${orderId}`,
+        error,
+      );
+    }
+  }
 }

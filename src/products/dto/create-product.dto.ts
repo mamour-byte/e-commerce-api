@@ -64,13 +64,7 @@ export class CreateProductDto {
   @Type(() => Number)
   @IsInt()
   @Min(0)
-  stock?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  lowStockThreshold?: number;
+  quantity?: number;
 
   @IsOptional()
   @IsEnum(ProductStatus)
@@ -79,6 +73,10 @@ export class CreateProductDto {
   @IsOptional()
   @IsBoolean()
   isFeatured?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  trackInventory?: boolean;
 
   @IsOptional()
   @IsString()

@@ -189,9 +189,8 @@ export class StatsService {
             sku: true,
             price: true,
             costPrice: true,
-            stock: true,
-            reservedStock: true,
-            lowStockThreshold: true,
+            quantity: true,
+            trackInventory: true,
             status: true,
             images: {
               where: { isPrimary: true },
@@ -209,41 +208,43 @@ export class StatsService {
             name: true,
             sku: true,
             price: true,
-            stock: true,
-            reservedStock: true,
+            quantity: true,
           },
         }),
         this.getTopProducts(orderWhere, limit),
       ]);
 
+    const LOW_STOCK_THRESHOLD = 5;
+
     const allStockAlerts = products
       .map((product) => {
-        const availableStock = product.stock - product.reservedStock;
+        const quantity = product.quantity;
         return {
           id: product.id,
           name: product.name,
           sku: product.sku,
           status: product.status,
           imageUrl: product.images[0]?.url || null,
-          stock: product.stock,
-          reservedStock: product.reservedStock,
-          availableStock,
-          lowStockThreshold: product.lowStockThreshold,
+          quantity,
+          trackInventory: product.trackInventory,
         };
       })
-      .filter((product) => product.availableStock <= product.lowStockThreshold)
-      .sort((a, b) => a.availableStock - b.availableStock);
+      .filter(
+        (product) =>
+          product.trackInventory && product.quantity <= LOW_STOCK_THRESHOLD,
+      )
+      .sort((a, b) => a.quantity - b.quantity);
 
     const stockAlerts = allStockAlerts.slice(0, limit);
 
     const productStockValue = products.reduce((sum, product) => {
       const unitValue = Number(product.costPrice || product.price || 0);
-      return sum + unitValue * product.stock;
+      return sum + unitValue * product.quantity;
     }, 0);
 
     const variantStockValue = variants.reduce((sum, variant) => {
       const unitValue = Number(variant.price || 0);
-      return sum + unitValue * variant.stock;
+      return sum + unitValue * variant.quantity;
     }, 0);
 
     return {
@@ -256,19 +257,11 @@ export class StatsService {
         withVariants: variants.length,
         lowStock: allStockAlerts.length,
         outOfStock: products.filter(
-          (product) => product.stock - product.reservedStock <= 0,
+          (product) => product.trackInventory && product.quantity <= 0,
         ).length,
-        stockUnits: products.reduce((sum, product) => sum + product.stock, 0),
-        reservedUnits: products.reduce(
-          (sum, product) => sum + product.reservedStock,
-          0,
-        ),
+        stockUnits: products.reduce((sum, product) => sum + product.quantity, 0),
         variantStockUnits: variants.reduce(
-          (sum, variant) => sum + variant.stock,
-          0,
-        ),
-        variantReservedUnits: variants.reduce(
-          (sum, variant) => sum + variant.reservedStock,
+          (sum, variant) => sum + variant.quantity,
           0,
         ),
         stockValue: productStockValue + variantStockValue,
@@ -342,8 +335,7 @@ export class StatsService {
         slug: true,
         sku: true,
         price: true,
-        stock: true,
-        reservedStock: true,
+        quantity: true,
         images: {
           where: { isPrimary: true },
           orderBy: { position: 'asc' },
@@ -365,8 +357,7 @@ export class StatsService {
         sku: product?.sku || null,
         imageUrl: product?.images[0]?.url || null,
         price: product ? Number(product.price) : 0,
-        stock: product?.stock || 0,
-        reservedStock: product?.reservedStock || 0,
+        quantity: product?.quantity || 0,
         quantitySold: group._sum.quantity || 0,
         revenue: Number(group._sum.total || 0),
       };

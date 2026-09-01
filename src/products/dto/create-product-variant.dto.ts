@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsInt,
   IsNumber,
   IsObject,
@@ -28,7 +29,11 @@ export class CreateProductVariantDto {
   @IsOptional()
   @IsInt()
   @Min(0)
-  stock?: number;
+  quantity?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  trackInventory?: boolean;
 
   @IsOptional()
   @IsObject()

@@ -1,92 +1,105 @@
 import { FulfillmentType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
-	IsArray,
-	IsEmail,
-	IsEnum,
-	IsNotEmpty,
-	IsOptional,
-	IsString,
-	ValidateIf,
-	ValidateNested,
+  IsArray,
+  IsEmail,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { CreateOrderItemDto } from './create-order-item.dto';
 
 export class CreateOrderDto {
-	@IsString()
-	@IsOptional()
-	cartId?: string;
+  @IsString()
+  @IsOptional()
+  cartId?: string;
 
-	@IsArray()
-	@ValidateNested({ each: true })
-	@Type(() => CreateOrderItemDto)
-	@IsOptional()
-	items?: CreateOrderItemDto[];
+  /**
+   * Session guest (X-Session-Id) utilisée pour vérifier l'appartenance
+   * du panier invité lors de la commande.
+   */
+  @IsString()
+  @IsOptional()
+  sessionId?: string;
 
-	@IsEnum(FulfillmentType)
-	@IsOptional()
-	fulfillmentType?: FulfillmentType = FulfillmentType.PICKUP;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateOrderItemDto)
+  @IsOptional()
+  items?: CreateOrderItemDto[];
 
-	@IsEnum(FulfillmentType)
-	@IsOptional()
-	deliveryMethod?: FulfillmentType;
+  @IsEnum(FulfillmentType)
+  @IsOptional()
+  fulfillmentType?: FulfillmentType = FulfillmentType.PICKUP;
 
-	@ValidateIf((dto) => (dto.fulfillmentType === FulfillmentType.DELIVERY || dto.deliveryMethod === FulfillmentType.DELIVERY) && !dto.deliveryNeighborhoodId)
-	@IsString()
-	@IsNotEmpty()
-	deliveryZoneId?: string;
+  @IsEnum(FulfillmentType)
+  @IsOptional()
+  deliveryMethod?: FulfillmentType;
 
-	@IsString()
-	@IsOptional()
-	shippingZoneId?: string;
+  @ValidateIf(
+    (dto) =>
+      (dto.fulfillmentType === FulfillmentType.DELIVERY ||
+        dto.deliveryMethod === FulfillmentType.DELIVERY) &&
+      !dto.deliveryNeighborhoodId,
+  )
+  @IsString()
+  @IsNotEmpty()
+  deliveryZoneId?: string;
 
-	@IsString()
-	@IsOptional()
-	deliveryNeighborhoodId?: string;
+  @IsString()
+  @IsOptional()
+  shippingZoneId?: string;
 
-	@IsEmail()
-	@IsOptional()
-	customerEmail?: string;
+  @IsString()
+  @IsOptional()
+  deliveryNeighborhoodId?: string;
 
-	@IsString()
-	@IsNotEmpty()
-	customerPhone: string;
+  @IsEmail()
+  @IsOptional()
+  customerEmail?: string;
 
-	@IsString()
-	@IsOptional()
-	shippingFirstName?: string;
+  @IsString()
+  @IsNotEmpty()
+  customerPhone: string;
 
-	@IsString()
-	@IsOptional()
-	shippingLastName?: string;
+  @IsString()
+  @IsOptional()
+  shippingFirstName?: string;
 
-	@IsString()
-	@IsOptional()
-	shippingPhone?: string;
+  @IsString()
+  @IsOptional()
+  shippingLastName?: string;
 
-	@ValidateIf((dto) => dto.fulfillmentType === FulfillmentType.DELIVERY)
-	@IsString()
-	@IsNotEmpty()
-	shippingAddress?: string;
+  @IsString()
+  @IsOptional()
+  shippingPhone?: string;
 
-	@IsString()
-	@IsOptional()
-	shippingCity?: string;
+  @ValidateIf((dto) => dto.fulfillmentType === FulfillmentType.DELIVERY)
+  @IsString()
+  @IsNotEmpty()
+  shippingAddress?: string;
 
-	@ValidateIf((dto) => dto.fulfillmentType === FulfillmentType.DELIVERY)
-	@IsString()
-	@IsOptional()
-	shippingRegion?: string;
+  @IsString()
+  @IsOptional()
+  shippingCity?: string;
 
-	@IsString()
-	@IsOptional()
-	shippingCountry?: string = 'SN';
+  @ValidateIf((dto) => dto.fulfillmentType === FulfillmentType.DELIVERY)
+  @IsString()
+  @IsOptional()
+  shippingRegion?: string;
 
-	@IsString()
-	@IsOptional()
-	couponCode?: string;
+  @IsString()
+  @IsOptional()
+  shippingCountry?: string = 'SN';
 
-	@IsString()
-	@IsOptional()
-	notes?: string;
+  @IsString()
+  @IsOptional()
+  couponCode?: string;
+
+  @IsString()
+  @IsOptional()
+  notes?: string;
 }

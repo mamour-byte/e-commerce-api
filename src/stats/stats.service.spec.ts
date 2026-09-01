@@ -73,8 +73,7 @@ describe('StatsService', () => {
         slug: 'produit-test',
         sku: 'SKU-1',
         price: 30,
-        stock: 20,
-        reservedStock: 2,
+        quantity: 20,
         images: [{ url: 'https://example.com/product.jpg' }],
       },
     ]);

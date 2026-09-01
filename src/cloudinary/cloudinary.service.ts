@@ -4,12 +4,46 @@ import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class CloudinaryService {
-  constructor(config: ConfigService) {
-    cloudinary.config({
-      cloud_name: config.getOrThrow<string>('CLOUDINARY_CLOUD_NAME'),
-      api_key: config.getOrThrow<string>('CLOUDINARY_API_KEY'),
-      api_secret: config.getOrThrow<string>('CLOUDINARY_API_SECRET'),
-    });
+  constructor(private readonly config: ConfigService) {
+    const cloudinaryUrl = this.config.get<string>('CLOUDINARY_URL');
+    const cloudName = this.config.get<string>('CLOUDINARY_CLOUD_NAME');
+    const apiKey = this.config.get<string>('CLOUDINARY_API_KEY');
+    const apiSecret = this.config.get<string>('CLOUDINARY_API_SECRET');
+
+    if (cloudinaryUrl) {
+      try {
+        const parsed = new URL(cloudinaryUrl);
+        const parsedCloudName = parsed.host;
+        const parsedApiKey = parsed.username;
+        const parsedApiSecret = decodeURIComponent(parsed.password);
+
+        if (parsedCloudName && parsedApiKey && parsedApiSecret) {
+          cloudinary.config({
+            cloud_name: parsedCloudName,
+            api_key: parsedApiKey,
+            api_secret: parsedApiSecret,
+            secure: true,
+          });
+          return;
+        }
+      } catch {
+        // fallback below
+      }
+    }
+
+    if (cloudName && apiKey && apiSecret) {
+      cloudinary.config({
+        cloud_name: cloudName,
+        api_key: apiKey,
+        api_secret: apiSecret,
+        secure: true,
+      });
+      return;
+    }
+
+    throw new Error(
+      'Cloudinary configuration missing. Set CLOUDINARY_URL or CLOUDINARY_CLOUD_NAME + CLOUDINARY_API_KEY + CLOUDINARY_API_SECRET.',
+    );
   }
 
   async uploadImage(file: Express.Multer.File): Promise<UploadApiResponse> {

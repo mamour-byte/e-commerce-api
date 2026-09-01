@@ -25,6 +25,18 @@ import { UserRole } from '@prisma/client';
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
+function isImageBuffer(buf: Buffer): boolean {
+  if (!buf || buf.length < 12) return false;
+  return (
+    (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) || // JPEG
+    (buf[0] === 0x89 &&
+      buf[1] === 0x50 &&
+      buf[2] === 0x4e &&
+      buf[3] === 0x47) || // PNG
+    (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46) // WEBP (RIFF)
+  );
+}
+
 @Controller('products/:productId/images')
 export class ImagesController {
   constructor(private readonly imagesService: ImagesService) {}
@@ -32,7 +44,24 @@ export class ImagesController {
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.STAFF)
-  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: MAX_SIZE_BYTES },
+      fileFilter: (_req, file, cb) => {
+        if (!ALLOWED_MIME.includes(file.mimetype)) {
+          cb(
+            new BadRequestException(
+              'Format non supporté. Utilisez JPEG, PNG ou WebP.',
+            ),
+            false,
+          );
+          return;
+        }
+        cb(null, true);
+      },
+    }),
+  )
   upload(
     @Param('productId') productId: string,
     @Query('alt') alt: string | undefined,
@@ -45,7 +74,14 @@ export class ImagesController {
     file: Express.Multer.File,
   ) {
     if (!ALLOWED_MIME.includes(file.mimetype)) {
-      throw new BadRequestException('Format non supporté. Utilisez JPEG, PNG ou WebP.');
+      throw new BadRequestException(
+        'Format non supporté. Utilisez JPEG, PNG ou WebP.',
+      );
+    }
+    if (!isImageBuffer(file.buffer)) {
+      throw new BadRequestException(
+        'Fichier corrompu ou non conforme (magic bytes invalides).',
+      );
     }
     return this.imagesService.upload(productId, file, alt);
   }
