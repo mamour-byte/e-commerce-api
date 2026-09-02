@@ -4,6 +4,7 @@ import { ProductsService } from './products.service';
 describe('ProductsService', () => {
   let service: ProductsService;
   let prisma: any;
+  let cloudinary: any;
 
   beforeEach(() => {
     prisma = {
@@ -15,7 +16,12 @@ describe('ProductsService', () => {
       },
     };
 
-    service = new ProductsService(prisma);
+    cloudinary = {
+      uploadImage: jest.fn(),
+      deleteImage: jest.fn(),
+    };
+
+    service = new ProductsService(prisma, cloudinary);
   });
 
   it('should be defined', () => {

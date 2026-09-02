@@ -1,10 +1,12 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -17,9 +19,12 @@ function isStaffRole(role?: UserRole): boolean {
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cloudinary: CloudinaryService,
+  ) {}
 
-  async create(dto: CreateProductDto) {
+  async create(dto: CreateProductDto, file?: Express.Multer.File) {
     let slug =
       dto.slug ||
       dto.name
@@ -79,6 +84,12 @@ export class ProductsService {
       }
     }
 
+    let uploaded: { secure_url: string; public_id: string } | null = null;
+    if (file) {
+      this.assertValidImage(file);
+      uploaded = await this.cloudinary.uploadImage(file);
+    }
+
     return this.prisma.product.create({
       data: {
         name: dto.name,
@@ -103,18 +114,30 @@ export class ProductsService {
 
         seoTitle: dto.seoTitle,
         seoDescription: dto.seoDescription,
-        ...(dto.imageUrl
+        ...(uploaded
           ? {
               images: {
                 create: [
                   {
-                    url: dto.imageUrl,
+                    url: uploaded.secure_url,
+                    publicId: uploaded.public_id,
                     isPrimary: true,
                   },
                 ],
               },
             }
-          : {}),
+          : dto.imageUrl
+            ? {
+                images: {
+                  create: [
+                    {
+                      url: dto.imageUrl,
+                      isPrimary: true,
+                    },
+                  ],
+                },
+              }
+            : {}),
       },
       include: {
         category: true,
@@ -290,7 +313,7 @@ export class ProductsService {
     return product;
   }
 
-  async update(id: string, dto: UpdateProductDto) {
+  async update(id: string, dto: UpdateProductDto, file?: Express.Multer.File) {
     await this.findOne(id, UserRole.ADMIN);
 
     if (dto.slug) {
@@ -327,32 +350,61 @@ export class ProductsService {
       seoDescription,
     } = dto;
 
-    return this.prisma.product.update({
-      where: { id },
-      data: {
-        ...(name !== undefined && { name }),
-        ...(slug !== undefined && { slug }),
-        ...(sku !== undefined && { sku: sku || null }),
-        ...(description !== undefined && { description }),
-        ...(shortDescription !== undefined && { shortDescription }),
-        ...(price !== undefined && { price }),
-        ...(compareAtPrice !== undefined && { compareAtPrice }),
-        ...(costPrice !== undefined && { costPrice }),
-        ...(quantity !== undefined && { quantity }),
-        ...(trackInventory !== undefined && { trackInventory }),
-        ...(status !== undefined && { status }),
-        ...(isFeatured !== undefined && { isFeatured }),
-        ...(categoryId !== undefined && { categoryId }),
-        ...(brandId !== undefined && { brandId }),
-        ...(seoTitle !== undefined && { seoTitle }),
-        ...(seoDescription !== undefined && { seoDescription }),
-      },
-      include: {
-        category: true,
-        brand: true,
-        images: true,
-        variants: true,
-      },
+    let uploaded: { secure_url: string; public_id: string } | null = null;
+    if (file) {
+      this.assertValidImage(file);
+      uploaded = await this.cloudinary.uploadImage(file);
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const product = await tx.product.update({
+        where: { id },
+        data: {
+          ...(name !== undefined && { name }),
+          ...(slug !== undefined && { slug }),
+          ...(sku !== undefined && { sku: sku || null }),
+          ...(description !== undefined && { description }),
+          ...(shortDescription !== undefined && { shortDescription }),
+          ...(price !== undefined && { price }),
+          ...(compareAtPrice !== undefined && { compareAtPrice }),
+          ...(costPrice !== undefined && { costPrice }),
+          ...(quantity !== undefined && { quantity }),
+          ...(trackInventory !== undefined && { trackInventory }),
+          ...(status !== undefined && { status }),
+          ...(isFeatured !== undefined && { isFeatured }),
+          ...(categoryId !== undefined && { categoryId }),
+          ...(brandId !== undefined && { brandId }),
+          ...(seoTitle !== undefined && { seoTitle }),
+          ...(seoDescription !== undefined && { seoDescription }),
+        },
+        include: {
+          category: true,
+          brand: true,
+          images: true,
+          variants: true,
+        },
+      });
+
+      if (uploaded) {
+        const imageCount = await tx.productImage.count({
+          where: { productId: id },
+        });
+        await tx.productImage.create({
+          data: {
+            productId: id,
+            url: uploaded.secure_url,
+            publicId: uploaded.public_id,
+            position: imageCount,
+            isPrimary: imageCount === 0,
+          },
+        });
+        product.images = await tx.productImage.findMany({
+          where: { productId: id },
+          orderBy: { position: 'asc' },
+        });
+      }
+
+      return product;
     });
   }
 
@@ -368,5 +420,37 @@ export class ProductsService {
         status: 'ARCHIVED',
       },
     });
+  }
+
+  private assertValidImage(file: Express.Multer.File): void {
+    const allowed = new Set([
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/webp',
+    ]);
+    if (!allowed.has(file.mimetype)) {
+      throw new BadRequestException(
+        'Format non supporté. Utilisez JPEG, PNG ou WebP.',
+      );
+    }
+    const buf = file.buffer;
+    const isImage =
+      buf &&
+      buf.length >= 12 &&
+      ((buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) ||
+        (buf[0] === 0x89 &&
+          buf[1] === 0x50 &&
+          buf[2] === 0x4e &&
+          buf[3] === 0x47) ||
+        (buf[0] === 0x52 &&
+          buf[1] === 0x49 &&
+          buf[2] === 0x46 &&
+          buf[3] === 0x46));
+    if (!isImage) {
+      throw new BadRequestException(
+        'Fichier corrompu ou non conforme (magic bytes invalides).',
+      );
+    }
   }
 }

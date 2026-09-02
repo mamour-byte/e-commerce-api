@@ -53,12 +53,30 @@ export class CloudinaryService {
           folder: 'ecommerce/products',
           resource_type: 'image',
           transformation: [
-            { width: 1600, height: 1600, crop: 'limit', quality: 'auto', fetch_format: 'auto' },
+            {
+              width: 1600,
+              height: 1600,
+              crop: 'limit',
+              quality: 'auto',
+              fetch_format: 'auto',
+            },
           ],
         },
         (error, result) => {
           if (error || !result) {
-            reject(new InternalServerErrorException('Upload Cloudinary échoué.'));
+            const raw = error as unknown as Record<string, unknown> | string;
+            const msg =
+              typeof raw === 'string'
+                ? raw
+                : typeof raw?.message === 'string'
+                  ? raw.message
+                  : '';
+            const detail = msg ? ` (${msg})` : '';
+            reject(
+              new InternalServerErrorException(
+                `Upload Cloudinary échoué${detail}.`,
+              ),
+            );
             return;
           }
           resolve(result);
