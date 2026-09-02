@@ -71,6 +71,13 @@ export class AuthService {
 				phone: dto.phone?.trim(),
 			},
 		});
+
+		// Email de bienvenue (fire-and-forget : ne bloque pas l'inscription
+		// et ne fait pas échouer la requête en cas de problème d'envoi).
+		this.mailService
+			.sendWelcomeEmail(user.email, user.firstName)
+			.catch((err) => this.logger.error('Failed to send welcome email', err));
+
 		return this.issueSession(user, metadata);
 	}
 

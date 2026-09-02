@@ -262,6 +262,81 @@ export class MailService {
 		}
 	}
 
+	async sendWelcomeEmail(
+		email: string,
+		firstName: string | null,
+	): Promise<boolean> {
+		const subject = 'Bienvenue chez Hayat Store !';
+		const htmlContent = this.generateWelcomeHtml(firstName);
+
+		if (!this.transporter) {
+			this.logger.log(`[SIMULATION EMAIL BIENVENUE] Destinataire: ${email}`);
+			return true;
+		}
+
+		try {
+			await this.transporter.sendMail({
+				from: this.from,
+				to: email,
+				subject,
+				html: htmlContent,
+			});
+			this.logger.log(`Email de bienvenue envoyé à ${email}.`);
+			return true;
+		} catch (error) {
+			this.logger.error(`Échec de l'envoi de l'email de bienvenue à ${email}`, error);
+			return false;
+		}
+	}
+
+	private generateWelcomeHtml(firstName: string | null): string {
+		const name = firstName || 'Cher(e) Client(e)';
+		return `
+		<!DOCTYPE html>
+		<html lang="fr">
+		<head>
+			<meta charset="UTF-8">
+			<title>Bienvenue chez Hayat Store</title>
+		</head>
+		<body style="font-family: Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 20px;">
+			<div style="max-width: 650px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+				<!-- Header -->
+				<div style="background-color: #1a202c; color: #ffffff; padding: 25px; text-align: center;">
+					<h1 style="margin: 0; font-size: 24px; letter-spacing: 1px;">HAYAT STORE</h1>
+					<p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;">Bienvenue !</p>
+				</div>
+
+				<!-- Content -->
+				<div style="padding: 30px;">
+					<h2 style="color: #2d3748; margin-top: 0; font-size: 20px;">Bonjour <strong>${name}</strong> 👋</h2>
+					<p style="color: #4a5568; line-height: 1.6;">
+						Votre compte a été créé avec succès sur <strong>Hayat Store</strong>.
+						Nous sommes ravis de vous compter parmi nos clients.
+					</p>
+					<p style="color: #4a5568; line-height: 1.6;">
+						Découvrez toute notre sélection de produits et profitez de nos offres exclusives.
+						Vous pouvez passer commande et suivre vos achats directement depuis votre compte.
+					</p>
+
+					<!-- CTA Button -->
+					<div style="text-align: center; margin: 30px 0;">
+						<a href="https://hayatstore-five.vercel.app" style="display: inline-block; background-color: #2b6cb0; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 6px; font-size: 16px; font-weight: bold;">
+							Commencer mes achats
+						</a>
+					</div>
+				</div>
+
+				<!-- Footer -->
+				<div style="background-color: #f7fafc; padding: 20px; text-align: center; font-size: 12px; color: #a0aec0; border-top: 1px solid #edf2f7;">
+					<p style="margin: 0;">Hayat Store - Votre boutique e-commerce de confiance</p>
+					<p style="margin: 5px 0 0 0;">Si vous avez des questions, contactez notre support.</p>
+				</div>
+			</div>
+		</body>
+		</html>
+		`;
+	}
+
 	private generatePasswordResetHtml(firstName: string | null, resetUrl: string): string {
 		const name = firstName || 'Cher(e) Client(e)';
 		return `
