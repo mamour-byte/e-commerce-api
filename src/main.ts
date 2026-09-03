@@ -6,7 +6,7 @@ import helmet from 'helmet';
 export function getAllowedOrigins(): string[] {
   return (
     process.env.FRONTEND_URLS ??
-    'http://localhost:5173,https://hayatstore-five.vercel.app'
+    'http://localhost:5173,https://hayatstore-five.vercel.app,https://hayat-sn.store,https://www.hayat-sn.store'
   )
     .split(',')
     .map((origin) => origin.trim().replace(/\/$/, ''))
