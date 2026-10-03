@@ -22,6 +22,8 @@ import { ReviewsModule } from './reviews/reviews.module';
 import { StatsModule } from './stats/stats.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { TrackingModule } from './tracking/tracking.module';
+import { MarketingModule } from './marketing/marketing.module';
 
 @Module({
   imports: [
@@ -51,6 +53,8 @@ import { InventoryModule } from './inventory/inventory.module';
     StatsModule,
     NotificationsModule,
     InventoryModule,
+    TrackingModule,
+    MarketingModule,
   ],
   controllers: [AppController],
   providers: [

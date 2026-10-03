@@ -124,7 +124,7 @@ describe('ShippingService', () => {
 			});
 
 			expect(result).toBeDefined();
-			expect(result.name).toBe('Mermoz');
+			expect(result[0].name).toBe('Mermoz');
 		});
 	});
 });
