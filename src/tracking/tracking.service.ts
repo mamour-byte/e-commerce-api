@@ -531,34 +531,54 @@ export class TrackingService {
       return existing;
     }
 
-    const created = await this.prisma.marketingEvent.create({
-      data: {
-        eventId: params.eventId,
-        name: params.name,
-        source: EventSource.BROWSER,
-        visitorId: params.visitorId,
-        sessionId: params.sessionId,
-        userId: params.userId,
-        orderId: params.orderId,
-        productId: params.productId,
-        variantId: params.variantId,
-        eventTime: params.eventTime,
-        value: params.value ? new Prisma.Decimal(params.value) : undefined,
-        currency: params.currency || 'XOF',
-        quantity: params.quantity,
-        pagePath: params.pagePath,
-        pageUrl: params.pageUrl,
-        referrer: params.referrer,
-        searchQuery: params.searchQuery,
-      },
-      include: {
-        visitor: true,
-        session: true,
-        order: { include: { items: true } },
-      },
-    });
+    try {
+      const created = await this.prisma.marketingEvent.create({
+        data: {
+          eventId: params.eventId,
+          name: params.name,
+          source: EventSource.BROWSER,
+          visitorId: params.visitorId,
+          sessionId: params.sessionId,
+          userId: params.userId,
+          orderId: params.orderId,
+          productId: params.productId,
+          variantId: params.variantId,
+          eventTime: params.eventTime,
+          value: params.value ? new Prisma.Decimal(params.value) : undefined,
+          currency: params.currency || 'XOF',
+          quantity: params.quantity,
+          pagePath: params.pagePath,
+          pageUrl: params.pageUrl,
+          referrer: params.referrer,
+          searchQuery: params.searchQuery,
+        },
+        include: {
+          visitor: true,
+          session: true,
+          order: { include: { items: true } },
+        },
+      });
 
-    return created;
+      return created;
+    } catch (error: any) {
+      const target = error?.meta?.target;
+      const isEventIdUniqueViolation =
+        error?.code === 'P2002' &&
+        (target === 'eventId' ||
+          target === 'MarketingEvent_eventId_key' ||
+          (Array.isArray(target) && target.includes('eventId')));
+
+      if (isEventIdUniqueViolation) {
+        const existingAfterRace = await this.prisma.marketingEvent.findUnique({
+          where: { eventId: params.eventId },
+          include: { visitor: true, session: true, order: true },
+        });
+        if (existingAfterRace) {
+          return existingAfterRace;
+        }
+      }
+      throw error;
+    }
   }
 
   private async recordSessionEvent(
