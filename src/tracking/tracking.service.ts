@@ -252,22 +252,35 @@ export class TrackingService {
 
   async recordPageView(dto: PageViewDto, _request?: unknown): Promise<void> {
     void _request;
-    const session = await this.resolveSession(dto.sessionKey);
-    if (!session) {
-      return;
+    try {
+      const session = await this.resolveSession(dto.sessionKey);
+      if (!session) {
+        return;
+      }
+      await this.touchSession(session.id);
+      await this.createPageViewEvent(session.id, session.visitorId, {
+        pagePath: dto.pagePath,
+        pageUrl: dto.pageUrl,
+        referrer: dto.referrer,
+        eventTime: new Date(),
+      });
+      await this.recordSessionEvent(session.id, TrackingEventName.PAGE_VIEW, {
+        pagePath: dto.pagePath,
+        pageUrl: dto.pageUrl,
+        referrer: dto.referrer,
+      });
+    } catch (error: any) {
+      const sessionKeyInfo = dto?.sessionKey
+        ? `len=${dto.sessionKey.length}`
+        : 'missing';
+      this.logger.error(
+        `[recordPageView] failed: code=${error?.code} name=${error?.name} msg=${error?.message} meta=${JSON.stringify(
+          error?.meta,
+        )} sessionKey=${sessionKeyInfo}`,
+        error?.stack,
+      );
+      throw error;
     }
-    await this.touchSession(session.id);
-    await this.createPageViewEvent(session.id, session.visitorId, {
-      pagePath: dto.pagePath,
-      pageUrl: dto.pageUrl,
-      referrer: dto.referrer,
-      eventTime: new Date(),
-    });
-    await this.recordSessionEvent(session.id, TrackingEventName.PAGE_VIEW, {
-      pagePath: dto.pagePath,
-      pageUrl: dto.pageUrl,
-      referrer: dto.referrer,
-    });
   }
 
   async recordSearch(dto: TrackSearchDto): Promise<void> {
