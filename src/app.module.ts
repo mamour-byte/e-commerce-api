@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+﻿import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
@@ -24,6 +24,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { TrackingModule } from './tracking/tracking.module';
 import { MarketingModule } from './marketing/marketing.module';
+import { SitemapModule } from './sitemap/sitemap.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { MarketingModule } from './marketing/marketing.module';
     InventoryModule,
     TrackingModule,
     MarketingModule,
+    SitemapModule,
   ],
   controllers: [AppController],
   providers: [
@@ -66,3 +68,4 @@ import { MarketingModule } from './marketing/marketing.module';
   ],
 })
 export class AppModule {}
+
