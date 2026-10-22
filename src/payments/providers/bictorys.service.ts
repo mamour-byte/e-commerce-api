@@ -279,6 +279,43 @@ export class BictorysService {
     };
   }
 
+  /**
+   * Recherche une transaction par paymentReference (n° de commande).
+   * Utile quand le transactionId n'est pas encore connu (webhook non reçu).
+   */
+  async findTransactionByReference(
+    paymentReference: string,
+  ): Promise<BictorysTransaction | null> {
+    if (!this.isConfigured) return null;
+    try {
+      const data = await this.request<{ data?: BictorysTransactionResponse[]; items?: BictorysTransactionResponse[] } | BictorysTransactionResponse>(
+        'GET',
+        `/transactions?paymentReference=${encodeURIComponent(paymentReference)}&limit=1`,
+      );
+      // API may return a list or a single object
+      const list =
+        (data as any)?.data ??
+        (data as any)?.items ??
+        (Array.isArray(data) ? data : null);
+      const item: BictorysTransactionResponse | undefined = list
+        ? list[0]
+        : (data as BictorysTransactionResponse);
+      if (!item?.id) return null;
+      return {
+        id: String(item.id),
+        status: String(item.status ?? '').toLowerCase(),
+        amount: Number(item.amount ?? 0),
+        currency: String(item.currency ?? '').toUpperCase(),
+        paymentReference: item.paymentReference ?? null,
+        merchantReference: item.merchantReference ?? null,
+        pspName: item.pspName ?? null,
+        raw: item as Record<string, unknown>,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // WEBHOOK
   // ─────────────────────────────────────────────────────────────────────────

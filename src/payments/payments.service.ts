@@ -506,7 +506,7 @@ export class PaymentsService {
   async verifyBictorysPayment(userId: string | null, orderId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      include: { payments: true },
+      include: { payments: { include: { order: true } } },
     });
 
     if (!order) {
@@ -545,7 +545,15 @@ export class PaymentsService {
       (metadata.bictorysTransactionId as string | null) ??
       null;
 
-    if (!transactionId) {
+    // If transactionId is not yet known (webhook not received), try to find
+    // the transaction by paymentReference (order number) directly from Bictorys
+    const resolvedTransactionId = transactionId ??
+      await this.bictorysService
+        .findTransactionByReference(payment.order?.orderNumber ?? (metadata.paymentReference as string ?? ''))
+        .then((tx) => tx?.id ?? null)
+        .catch(() => null);
+
+    if (!resolvedTransactionId) {
       return {
         confirmed: false,
         status: payment.status,
@@ -558,7 +566,7 @@ export class PaymentsService {
     const check = await this.verifyBictorysTransaction(
       { ...payment, order },
       {
-        transactionId,
+        transactionId: resolvedTransactionId,
         webhookAmount: Number.isFinite(Number(metadata.bictorysWebhookAmount))
           ? Number(metadata.bictorysWebhookAmount)
           : null,
@@ -585,7 +593,7 @@ export class PaymentsService {
       order.id,
       'Vérification manuelle Bictorys',
       {
-        bictorysTransactionId: transactionId,
+        bictorysTransactionId: resolvedTransactionId,
         bictorysVerification: check.source ?? 'server',
       },
     );
