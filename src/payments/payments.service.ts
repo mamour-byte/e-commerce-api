@@ -547,10 +547,23 @@ export class PaymentsService {
 
     // If transactionId is not yet known (webhook not received), try to find
     // the transaction by paymentReference (order number) directly from Bictorys
+    const orderNumber = payment.order?.orderNumber ?? (metadata.paymentReference as string | undefined) ?? '';
     const resolvedTransactionId = transactionId ??
       await this.bictorysService
-        .findTransactionByReference(payment.order?.orderNumber ?? (metadata.paymentReference as string ?? ''))
-        .then((tx) => tx?.id ?? null)
+        .findTransactionByReference(orderNumber)
+        .then((tx) => {
+          if (!tx) return null;
+          // Security: ensure the transaction belongs to this order
+          const refMatch = !tx.paymentReference || tx.paymentReference === orderNumber;
+          const merchantMatch = !tx.merchantReference || tx.merchantReference === order.id;
+          if (!refMatch || !merchantMatch) {
+            this.logger.error(
+              `findTransactionByReference: transaction ${tx.id} ne correspond pas à la commande ${order.id} (paymentReference=${tx.paymentReference}, merchantReference=${tx.merchantReference})`,
+            );
+            return null;
+          }
+          return tx.id;
+        })
         .catch(() => null);
 
     if (!resolvedTransactionId) {

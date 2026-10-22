@@ -311,7 +311,10 @@ export class BictorysService {
         pspName: item.pspName ?? null,
         raw: item as Record<string, unknown>,
       };
-    } catch {
+    } catch (error) {
+      this.logger.error(
+        `findTransactionByReference(${paymentReference}) a échoué : ${(error as Error).message}`,
+      );
       return null;
     }
   }

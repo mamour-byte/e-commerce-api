@@ -12,6 +12,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -148,6 +149,7 @@ export class PaymentsController {
   @Post('bictorys/verify/:orderId')
   @HttpCode(HttpStatus.OK)
   @UseGuards(OptionalJwtAuthGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
   verifyBictorysPayment(
     @Param('orderId') orderId: string,
     @CurrentUser() user: AuthUser | null,
