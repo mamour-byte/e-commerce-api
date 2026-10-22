@@ -22,17 +22,11 @@ import { UserRole } from '@prisma/client';
 
 @Controller('products/:productId/variants')
 export class VariantsController {
-  constructor(
-    private readonly variantsService: VariantsService,
-  ) {}
+  constructor(private readonly variantsService: VariantsService) {}
 
   @Get()
-  findByProduct(
-    @Param('productId') productId: string,
-  ) {
-    return this.variantsService.findByProduct(
-      productId,
-    );
+  findByProduct(@Param('productId') productId: string) {
+    return this.variantsService.findByProduct(productId);
   }
 
   @Get(':id')
@@ -47,23 +41,14 @@ export class VariantsController {
     @Param('productId') productId: string,
     @Body() dto: CreateProductVariantDto,
   ) {
-    return this.variantsService.create(
-      productId,
-      dto,
-    );
+    return this.variantsService.create(productId, dto);
   }
 
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.STAFF)
-  update(
-    @Param('id') id: string,
-    @Body() dto: UpdateProductVariantDto,
-  ) {
-    return this.variantsService.update(
-      id,
-      dto,
-    );
+  update(@Param('id') id: string, @Body() dto: UpdateProductVariantDto) {
+    return this.variantsService.update(id, dto);
   }
 
   @Delete(':id')

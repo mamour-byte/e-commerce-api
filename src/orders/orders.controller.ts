@@ -1,15 +1,15 @@
 import {
-	Body,
-	Controller,
-	Get,
-	Headers,
-	HttpCode,
-	HttpStatus,
-	Param,
-	Patch,
-	Post,
-	Query,
-	UseGuards,
+  Body,
+  Controller,
+  Get,
+  Headers,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
 } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -27,102 +27,93 @@ type AuthUser = { id: string; role: UserRole };
 
 @Controller('orders')
 export class OrdersController {
-	constructor(private readonly ordersService: OrdersService) {}
+  constructor(private readonly ordersService: OrdersService) {}
 
-	/**
-	 * Créer une commande (Guest ou Client connecté)
-	 */
-	@Post()
-	@UseGuards(OptionalJwtAuthGuard)
-	create(
-		@Body() dto: CreateOrderDto,
-		@CurrentUser() user: AuthUser | null,
-		@Headers('x-session-id') sessionId?: string,
-	) {
-		return this.ordersService.create(user?.id || null, dto, sessionId);
-	}
+  /**
+   * Créer une commande (Guest ou Client connecté)
+   */
+  @Post()
+  @UseGuards(OptionalJwtAuthGuard)
+  create(
+    @Body() dto: CreateOrderDto,
+    @CurrentUser() user: AuthUser | null,
+    @Headers('x-session-id') sessionId?: string,
+  ) {
+    return this.ordersService.create(user?.id || null, dto, sessionId);
+  }
 
-	/**
-	 * Client : Obtenir ses propres commandes
-	 */
-	@Get('my-orders')
-	@UseGuards(JwtAuthGuard)
-	findMyOrders(
-		@CurrentUser() user: AuthUser,
-		@Query() query: OrderQueryDto,
-	) {
-		return this.ordersService.findMyOrders(user.id, query);
-	}
+  /**
+   * Client : Obtenir ses propres commandes
+   */
+  @Get('my-orders')
+  @UseGuards(JwtAuthGuard)
+  findMyOrders(@CurrentUser() user: AuthUser, @Query() query: OrderQueryDto) {
+    return this.ordersService.findMyOrders(user.id, query);
+  }
 
-	/**
-	 * Client : Obtenir le détail d'une de ses commandes
-	 */
-	@Get('my-orders/:id')
-	@UseGuards(JwtAuthGuard)
-	findMyOrderById(
-		@CurrentUser() user: AuthUser,
-		@Param('id') id: string,
-	) {
-		return this.ordersService.findMyOrderById(user.id, id);
-	}
+  /**
+   * Client : Obtenir le détail d'une de ses commandes
+   */
+  @Get('my-orders/:id')
+  @UseGuards(JwtAuthGuard)
+  findMyOrderById(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ordersService.findMyOrderById(user.id, id);
+  }
 
-	/**
-	 * Client : Annuler une de ses commandes en attente
-	 */
-	@Patch('my-orders/:id/cancel')
-	@HttpCode(HttpStatus.OK)
-	@UseGuards(JwtAuthGuard)
-	cancelMyOrder(
-		@CurrentUser() user: AuthUser,
-		@Param('id') id: string,
-	) {
-		return this.ordersService.cancelMyOrder(user.id, id);
-	}
+  /**
+   * Client : Annuler une de ses commandes en attente
+   */
+  @Patch('my-orders/:id/cancel')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  cancelMyOrder(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ordersService.cancelMyOrder(user.id, id);
+  }
 
-	/**
-	 * Admin / Staff : Lister toutes les commandes avec pagination & filtres
-	 */
-	@Get()
-	@UseGuards(JwtAuthGuard, RolesGuard)
-	@Roles(UserRole.ADMIN, UserRole.STAFF)
-	findAll(@Query() query: OrderQueryDto) {
-		return this.ordersService.findAll(query);
-	}
+  /**
+   * Admin / Staff : Lister toutes les commandes avec pagination & filtres
+   */
+  @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.STAFF)
+  findAll(@Query() query: OrderQueryDto) {
+    return this.ordersService.findAll(query);
+  }
 
-	/**
-	 * Admin / Staff : Obtenir les détails d'une commande
-	 */
-	@Get(':id')
-	@UseGuards(JwtAuthGuard, RolesGuard)
-	@Roles(UserRole.ADMIN, UserRole.STAFF)
-	findOne(@Param('id') id: string) {
-		return this.ordersService.findOne(id);
-	}
+  /**
+   * Admin / Staff : Obtenir les détails d'une commande
+   */
+  @Get(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.STAFF)
+  findOne(@Param('id') id: string) {
+    return this.ordersService.findOne(id);
+  }
 
-	/**
-	 * Admin / Staff : Mettre à jour le statut d'une commande (PENDING, CONFIRMED, IN_DELIVERY, DELIVERED, CANCELLED)
-	 */
-	@Patch(':id/status')
-	@UseGuards(JwtAuthGuard, RolesGuard)
-	@Roles(UserRole.ADMIN, UserRole.STAFF)
-	updateStatus(
-		@Param('id') id: string,
-		@Body() dto: UpdateOrderStatusDto,
-		@CurrentUser() user: AuthUser,
-	) {
-		return this.ordersService.updateStatus(id, dto, user.id);
-	}
+  /**
+   * Admin / Staff : Mettre à jour le statut d'une commande (PENDING, CONFIRMED, IN_DELIVERY, DELIVERED, CANCELLED)
+   */
+  @Patch(':id/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.STAFF)
+  updateStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateOrderStatusDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.ordersService.updateStatus(id, dto, user.id);
+  }
 
-	/**
-	 * Admin / Staff : Mettre à jour le statut de paiement
-	 */
-	@Patch(':id/payment-status')
-	@UseGuards(JwtAuthGuard, RolesGuard)
-	@Roles(UserRole.ADMIN, UserRole.STAFF)
-	updatePaymentStatus(
-		@Param('id') id: string,
-		@Body() dto: UpdatePaymentStatusDto,
-	) {
-		return this.ordersService.updatePaymentStatus(id, dto);
-	}
+  /**
+   * Admin / Staff : Mettre à jour le statut de paiement
+   */
+  @Patch(':id/payment-status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.STAFF)
+  updatePaymentStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdatePaymentStatusDto,
+  ) {
+    return this.ordersService.updatePaymentStatus(id, dto);
+  }
 }

@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  buildProviderRedirectUrl,
+  normalizeBaseUrl,
+} from '../checkout-redirect';
 
 export interface OrangeMoneyPaymentResponse {
   status: number;
@@ -15,7 +19,8 @@ export class OrangeMoneyService {
   private readonly merchantKey: string;
   private readonly authHeader: string;
   private readonly baseUrl: string;
-  private readonly frontendUrl: string;
+  /** URL publique de l'API : elle relaie la redirection vers le front. */
+  private readonly apiPublicUrl: string;
   private readonly backendUrl: string;
 
   constructor(private readonly config: ConfigService) {
@@ -25,8 +30,12 @@ export class OrangeMoneyService {
     this.baseUrl =
       this.config.get<string>('ORANGE_MONEY_API_URL') ||
       'https://api.orange.com';
-    this.frontendUrl =
-      this.config.get<string>('FRONTEND_URL') || 'http://localhost:3001';
+    this.apiPublicUrl = normalizeBaseUrl(
+      this.config.get<string>('API_PUBLIC_URL') ||
+        this.config.get<string>('BACKEND_URL') ||
+        this.config.get<string>('FRONTEND_URL') ||
+        'http://localhost:3000',
+    );
     this.backendUrl =
       this.config.get<string>('BACKEND_URL') || 'http://localhost:3000';
   }
@@ -42,8 +51,12 @@ export class OrangeMoneyService {
       currency: params.currency === 'XOF' ? 'OUV' : params.currency, // OUV est le code ISO interne Orange Money pour XOF
       order_id: params.orderNumber,
       amount: params.amount,
-      return_url: `${this.frontendUrl}/checkout/success?orderId=${params.orderId}`,
-      cancel_url: `${this.frontendUrl}/checkout/cancel?orderId=${params.orderId}`,
+      return_url: buildProviderRedirectUrl(this.apiPublicUrl, 'success', {
+        orderId: params.orderId,
+      }),
+      cancel_url: buildProviderRedirectUrl(this.apiPublicUrl, 'cancel', {
+        orderId: params.orderId,
+      }),
       notif_url: `${this.backendUrl}/api/payments/webhooks/orange-money`,
       reference: params.orderNumber,
     };

@@ -7,6 +7,7 @@ import {
   OrderItem,
   TrackingEventName,
   Visitor,
+  VisitorSession,
 } from '@prisma/client';
 
 const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
@@ -14,11 +15,11 @@ const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 export interface MetaUserData {
   em?: string[];
   ph?: string[];
-  fn?: string;
-  ln?: string;
-  city?: string;
-  country?: string;
-  external_id?: string;
+  fn?: string[];
+  ln?: string[];
+  ct?: string[];
+  country?: string[];
+  external_id?: string[];
   client_ip_address?: string;
   client_user_agent?: string;
   fbc?: string;
@@ -55,6 +56,7 @@ export interface MetaDispatchResult {
 
 type TrackingEventWithContext = MarketingEvent & {
   visitor?: Visitor | null;
+  session?: VisitorSession | null;
   order?: (Order & { items?: OrderItem[] }) | null;
 };
 
@@ -101,10 +103,12 @@ export class MetaCapiService {
     const visitor = event.visitor;
     const order = event.order;
 
-    const userData: MetaUserData = {
-      external_id: visitor?.id,
-    };
+    const userData: MetaUserData = {};
 
+    const externalId = visitor?.userId || visitor?.id;
+    if (externalId) {
+      userData.external_id = [externalId];
+    }
     if (visitor?.emailHash) {
       userData.em = [visitor.emailHash];
     }
@@ -113,15 +117,27 @@ export class MetaCapiService {
     }
     if (visitor?.fbc) {
       userData.fbc = visitor.fbc;
+    } else if (event.session?.fbclid) {
+      // Construire fbc depuis fbclid si le visitor n'en a pas
+      const ts = Math.floor(event.eventTime.getTime() / 1000);
+      userData.fbc = `fb.1.${ts}.${event.session.fbclid}`;
     }
     if (visitor?.fbp) {
       userData.fbp = visitor.fbp;
     }
-    if (visitor?.userId) {
-      userData.external_id = visitor.userId;
-    }
     if (order) {
-      userData.country = order.shippingCountry;
+      if (order.shippingFirstName) {
+        userData.fn = [order.shippingFirstName.trim().toLowerCase()];
+      }
+      if (order.shippingLastName) {
+        userData.ln = [order.shippingLastName.trim().toLowerCase()];
+      }
+      if (order.shippingCity) {
+        userData.ct = [order.shippingCity.trim().toLowerCase()];
+      }
+      if (order.shippingCountry) {
+        userData.country = [order.shippingCountry.trim().toLowerCase()];
+      }
     }
 
     const customData: MetaCustomData = {
@@ -191,7 +207,19 @@ export class MetaCapiService {
     for (const event of events) {
       const payload = this.buildEvent(event);
       if (payload) {
-        data.push(payload);
+        if (requestContext?.ipAddress) {
+          payload.user_data.client_ip_address ??= requestContext.ipAddress;
+        }
+        if (requestContext?.userAgent) {
+          payload.user_data.client_user_agent ??= requestContext.userAgent;
+        }
+        if (this.hasMinimumUserData(payload.user_data)) {
+          data.push(payload);
+        } else {
+          this.logger.warn(
+            `Evenement ${payload.event_name} ignore : user_data insuffisants pour le matching Meta.`,
+          );
+        }
       }
     }
 
@@ -200,15 +228,6 @@ export class MetaCapiService {
     }
 
     const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${this.pixelId}/events`;
-
-    for (const payload of data) {
-      if (!payload.user_data.client_ip_address && requestContext?.ipAddress) {
-        payload.user_data.client_ip_address = requestContext.ipAddress;
-      }
-      if (!payload.user_data.client_user_agent && requestContext?.userAgent) {
-        payload.user_data.client_user_agent = requestContext.userAgent;
-      }
-    }
 
     const body: Record<string, unknown> = {
       data,
@@ -251,6 +270,17 @@ export class MetaCapiService {
       this.logger.error(`Echec d'appel a Meta Conversions API : ${message}`);
       return { status: 'failed', error: message };
     }
+  }
+
+  private hasMinimumUserData(ud: MetaUserData): boolean {
+    return Boolean(
+      ud.em?.length ||
+      ud.ph?.length ||
+      ud.fbc ||
+      ud.fbp ||
+      (ud.client_ip_address && ud.client_user_agent) ||
+      ud.external_id?.length,
+    );
   }
 
   async testConnection(): Promise<MetaDispatchResult> {

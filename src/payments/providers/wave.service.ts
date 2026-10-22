@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
+import {
+  buildProviderRedirectUrl,
+  normalizeBaseUrl,
+} from '../checkout-redirect';
 
 export interface WaveCheckoutResponse {
   id: string;
@@ -17,15 +21,20 @@ export class WaveService {
   private readonly apiKey: string;
   private readonly webhookSecret: string;
   private readonly baseUrl: string;
-  private readonly frontendUrl: string;
+  /** URL publique de l'API : elle relaie la redirection vers le front. */
+  private readonly apiPublicUrl: string;
 
   constructor(private readonly config: ConfigService) {
     this.apiKey = this.config.get<string>('WAVE_API_KEY') || '';
     this.webhookSecret = this.config.get<string>('WAVE_WEBHOOK_SECRET') || '';
     this.baseUrl =
       this.config.get<string>('WAVE_API_URL') || 'https://api.wave.com/v1';
-    this.frontendUrl =
-      this.config.get<string>('FRONTEND_URL') || 'http://localhost:3001';
+    this.apiPublicUrl = normalizeBaseUrl(
+      this.config.get<string>('API_PUBLIC_URL') ||
+        this.config.get<string>('BACKEND_URL') ||
+        this.config.get<string>('FRONTEND_URL') ||
+        'http://localhost:3000',
+    );
   }
 
   async createCheckoutSession(params: {
@@ -37,8 +46,12 @@ export class WaveService {
     const payload = {
       amount: params.amount.toString(),
       currency: params.currency || 'XOF',
-      error_url: `${this.frontendUrl}/checkout/error?orderId=${params.orderId}`,
-      success_url: `${this.frontendUrl}/checkout/success?orderId=${params.orderId}`,
+      error_url: buildProviderRedirectUrl(this.apiPublicUrl, 'error', {
+        orderId: params.orderId,
+      }),
+      success_url: buildProviderRedirectUrl(this.apiPublicUrl, 'success', {
+        orderId: params.orderId,
+      }),
       client_reference: params.orderNumber,
     };
 

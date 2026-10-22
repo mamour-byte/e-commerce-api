@@ -1,16 +1,30 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MailModule } from '../mail/mail.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { PrismaModule } from '../prisma/prisma.module';
+import { TrackingModule } from '../tracking/tracking.module';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
+import { BictorysService } from './providers/bictorys.service';
 import { OrangeMoneyService } from './providers/orange-money.service';
 import { WaveService } from './providers/wave.service';
 
 @Module({
-	imports: [PrismaModule, ConfigModule, MailModule],
-	controllers: [PaymentsController],
-	providers: [PaymentsService, WaveService, OrangeMoneyService],
-	exports: [PaymentsService, WaveService, OrangeMoneyService],
+  imports: [
+    PrismaModule,
+    ConfigModule,
+    MailModule,
+    NotificationsModule,
+    TrackingModule,
+  ],
+  controllers: [PaymentsController],
+  providers: [
+    PaymentsService,
+    WaveService,
+    OrangeMoneyService,
+    BictorysService,
+  ],
+  exports: [PaymentsService, WaveService, OrangeMoneyService, BictorysService],
 })
 export class PaymentsModule {}

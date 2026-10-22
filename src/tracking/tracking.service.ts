@@ -335,6 +335,20 @@ export class TrackingService {
     }
     await this.touchSession(session.id);
 
+    // Mettre à jour fbp/fbc du visitor si fournis (améliore le matching Meta)
+    if (dto.fbp || dto.fbc) {
+      const updateData: Record<string, string> = {};
+      if (dto.fbp && !session.visitor.fbp) updateData.fbp = dto.fbp;
+      if (dto.fbc && !session.visitor.fbc) updateData.fbc = dto.fbc;
+      if (Object.keys(updateData).length) {
+        await this.prisma.visitor.update({
+          where: { id: session.visitorId },
+          data: updateData,
+        });
+        session.visitor = { ...session.visitor, ...updateData };
+      }
+    }
+
     const events: EventWithContext[] = [];
     for (const e of dto.events) {
       const eventTime = e.eventTime ? new Date(e.eventTime) : new Date();

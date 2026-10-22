@@ -77,9 +77,8 @@ export class CreateOrderDto {
   @IsOptional()
   shippingPhone?: string;
 
-  @ValidateIf((dto) => dto.fulfillmentType === FulfillmentType.DELIVERY)
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   shippingAddress?: string;
 
   @IsString()

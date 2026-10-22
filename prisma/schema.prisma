@@ -59,6 +59,7 @@ enum PaymentStatus {
 enum PaymentProvider {
   WAVE
   ORANGE_MONEY
+  BICTORYS
   PAYTECH
   INTOUCH
   CASH_ON_DELIVERY
@@ -194,6 +195,7 @@ model User {
 
   refreshTokens       RefreshToken[]
   passwordResetTokens PasswordResetToken[]
+  socialIdentities    SocialIdentity[]
 
   visitors        Visitor[]
   marketingEvents MarketingEvent[]
@@ -201,6 +203,29 @@ model User {
   @@index([email])
   @@index([role])
   @@index([status])
+}
+
+//////////////////////////////////////////////////////
+// SOCIAL IDENTITIES
+//////////////////////////////////////////////////////
+
+enum SocialProvider {
+  GOOGLE
+  APPLE
+}
+
+model SocialIdentity {
+  id         String         @id @default(cuid())
+  provider   SocialProvider
+  providerId String
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([provider, providerId])
+  @@index([userId])
 }
 
 //////////////////////////////////////////////////////

@@ -11,9 +11,7 @@ import { UpdateBrandDto } from './dto/update-brand.dto';
 
 @Injectable()
 export class BrandsService {
-  constructor(
-    private readonly prisma: PrismaService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateBrandDto) {
     const existing = await this.prisma.brand.findUnique({
@@ -23,9 +21,7 @@ export class BrandsService {
     });
 
     if (existing) {
-      throw new ConflictException(
-        'Une marque avec ce slug existe déjà.',
-      );
+      throw new ConflictException('Une marque avec ce slug existe déjà.');
     }
 
     return this.prisma.brand.create({
@@ -75,9 +71,7 @@ export class BrandsService {
     });
 
     if (!brand) {
-      throw new NotFoundException(
-        'Marque introuvable.',
-      );
+      throw new NotFoundException('Marque introuvable.');
     }
 
     return brand;
@@ -111,12 +105,11 @@ export class BrandsService {
   async remove(id: string) {
     await this.findOne(id);
 
-    const productCount =
-      await this.prisma.product.count({
-        where: {
-          brandId: id,
-        },
-      });
+    const productCount = await this.prisma.product.count({
+      where: {
+        brandId: id,
+      },
+    });
 
     if (productCount > 0) {
       throw new ConflictException(

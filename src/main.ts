@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 
 export function getAllowedOrigins(): string[] {
   return (
@@ -27,6 +28,7 @@ async function bootstrap() {
   });
 
   app.use(helmet({ crossOriginResourcePolicy: false }));
+  app.use(cookieParser());
   app.setGlobalPrefix('api');
   app.useGlobalPipes(
     new ValidationPipe({

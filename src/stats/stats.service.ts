@@ -259,7 +259,10 @@ export class StatsService {
         outOfStock: products.filter(
           (product) => product.trackInventory && product.quantity <= 0,
         ).length,
-        stockUnits: products.reduce((sum, product) => sum + product.quantity, 0),
+        stockUnits: products.reduce(
+          (sum, product) => sum + product.quantity,
+          0,
+        ),
         variantStockUnits: variants.reduce(
           (sum, variant) => sum + variant.quantity,
           0,

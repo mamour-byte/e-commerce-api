@@ -6,147 +6,193 @@ const PDFDocument = require('pdfkit');
 
 @Injectable()
 export class MailService {
-	private readonly logger = new Logger(MailService.name);
-	private transporter: nodemailer.Transporter | null = null;
-	private readonly from: string;
+  private readonly logger = new Logger(MailService.name);
+  private transporter: nodemailer.Transporter | null = null;
+  private readonly from: string;
 
-	constructor(private readonly config: ConfigService) {
-		const host = this.config.get<string>('SMTP_HOST');
-		const port = Number(this.config.get<string | number>('SMTP_PORT')) || 587;
-		const user = this.config.get<string>('SMTP_USER');
-		const pass = this.config.get<string>('SMTP_PASS');
-		this.from = this.config.get<string>('MAIL_FROM') || 'Hayat Store <noreply@hayatstore.com>';
+  constructor(private readonly config: ConfigService) {
+    const host = this.config.get<string>('SMTP_HOST');
+    const port = Number(this.config.get<string | number>('SMTP_PORT')) || 587;
+    const user = this.config.get<string>('SMTP_USER');
+    const pass = this.config.get<string>('SMTP_PASS');
+    this.from =
+      this.config.get<string>('MAIL_FROM') ||
+      'Hayat Store <noreply@hayatstore.com>';
 
-		if (host && user && pass && !user.includes('your-email')) {
-			const secure = port === 465;
-			this.transporter = nodemailer.createTransport({
-				host,
-				port,
-				secure,
-				requireTLS: !secure && port === 587,
-				auth: { user, pass },
-				tls: {
-					// Certains hébergeurs (LWS, etc.) utilisent des certificats
-					// dont le CN ne matche pas exactement le hostname SMTP.
-					rejectUnauthorized: false,
-				},
-				family: 4,
-				connectionTimeout: 15000,
-				greetingTimeout: 15000,
-				socketTimeout: 15000,
-			} as nodemailer.TransportOptions);
-			this.logger.log(`SMTP configuré : ${host}:${port} (secure=${secure})`);
-		} else {
-			this.logger.warn('SMTP non configuré ou clés par défaut dans .env. Les emails seront journalisés en console.');
-		}
-	}
+    if (host && user && pass && !user.includes('your-email')) {
+      const secure = port === 465;
+      this.transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure,
+        requireTLS: !secure && port === 587,
+        auth: { user, pass },
+        tls: {
+          // Certains hébergeurs (LWS, etc.) utilisent des certificats
+          // dont le CN ne matche pas exactement le hostname SMTP.
+          rejectUnauthorized: false,
+        },
+        family: 4,
+        connectionTimeout: 15000,
+        greetingTimeout: 15000,
+        socketTimeout: 15000,
+      } as nodemailer.TransportOptions);
+      this.logger.log(`SMTP configuré : ${host}:${port} (secure=${secure})`);
+    } else {
+      this.logger.warn(
+        'SMTP non configuré ou clés par défaut dans .env. Les emails seront journalisés en console.',
+      );
+    }
+  }
 
-	private formatAmount(value: unknown): string {
-		return Number(value).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ');
-	}
+  private formatAmount(value: unknown): string {
+    return Number(value)
+      .toLocaleString('fr-FR')
+      .replace(/[\u00a0\u202f]/g, ' ');
+  }
 
-	private generateInvoicePdf(order: any): Promise<Buffer> {
-		return new Promise((resolve, reject) => {
-			const doc = new PDFDocument({ margin: 50, size: 'A4' });
-			const chunks: Buffer[] = [];
-			doc.on('data', (chunk) => chunks.push(chunk));
-			doc.on('end', () => resolve(Buffer.concat(chunks)));
-			doc.on('error', reject);
+  private generateInvoicePdf(order: any): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 50, size: 'A4' });
+      const chunks: Buffer[] = [];
+      doc.on('data', (chunk) => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
 
-			const customerName = `${order.shippingFirstName || ''} ${order.shippingLastName || ''}`.trim() || 'Client';
+      const customerName =
+        `${order.shippingFirstName || ''} ${order.shippingLastName || ''}`.trim() ||
+        'Client';
 
-			// En-tête
-			doc.fontSize(20).font('Helvetica-Bold').text('HAYAT STORE', { align: 'center' });
-			doc.fontSize(12).font('Helvetica').text('Facture / Reçu de paiement', { align: 'center' });
-			doc.moveDown();
+      // En-tête
+      doc
+        .fontSize(20)
+        .font('Helvetica-Bold')
+        .text('HAYAT STORE', { align: 'center' });
+      doc
+        .fontSize(12)
+        .font('Helvetica')
+        .text('Facture / Reçu de paiement', { align: 'center' });
+      doc.moveDown();
 
-			// Infos commande
-			doc.fontSize(10);
-			doc.text(`Numéro de commande : ${order.orderNumber}`);
-			doc.text(`Date : ${new Date(order.createdAt).toLocaleDateString('fr-FR')}`);
-			doc.text(`Client : ${customerName}`);
-			doc.text(`Statut paiement : PAYÉ`);
-			doc.moveDown();
+      // Infos commande
+      doc.fontSize(10);
+      doc.text(`Numéro de commande : ${order.orderNumber}`);
+      doc.text(
+        `Date : ${new Date(order.createdAt).toLocaleDateString('fr-FR')}`,
+      );
+      doc.text(`Client : ${customerName}`);
+      doc.text(`Statut paiement : PAYÉ`);
+      doc.moveDown();
 
-			// Tableau des articles
-			doc.font('Helvetica-Bold').text('Produit', 50, doc.y, { width: 220, continued: false });
-			const headerY = doc.y - doc.currentLineHeight();
-			doc.text('Qté', 270, headerY, { width: 50 });
-			doc.text('Prix unit.', 320, headerY, { width: 100 });
-			doc.text('Total', 420, headerY, { width: 100, align: 'right' });
-			doc.moveDown(0.5);
-			doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-			doc.moveDown(0.5);
+      // Tableau des articles
+      doc
+        .font('Helvetica-Bold')
+        .text('Produit', 50, doc.y, { width: 220, continued: false });
+      const headerY = doc.y - doc.currentLineHeight();
+      doc.text('Qté', 270, headerY, { width: 50 });
+      doc.text('Prix unit.', 320, headerY, { width: 100 });
+      doc.text('Total', 420, headerY, { width: 100, align: 'right' });
+      doc.moveDown(0.5);
+      doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+      doc.moveDown(0.5);
 
-			doc.font('Helvetica').fontSize(9);
-			for (const item of order.items || []) {
-				const rowY = doc.y;
-				const label = item.variantName ? `${item.productName} (${item.variantName})` : item.productName;
-				doc.text(label, 50, rowY, { width: 215 });
-				doc.text(String(item.quantity), 270, rowY, { width: 50 });
-				doc.text(`${this.formatAmount(item.unitPrice)} XOF`, 320, rowY, { width: 100 });
-				doc.text(`${this.formatAmount(item.total)} XOF`, 420, rowY, { width: 100, align: 'right' });
-				doc.moveDown(0.3);
-			}
+      doc.font('Helvetica').fontSize(9);
+      for (const item of order.items || []) {
+        const rowY = doc.y;
+        const label = item.variantName
+          ? `${item.productName} (${item.variantName})`
+          : item.productName;
+        doc.text(label, 50, rowY, { width: 215 });
+        doc.text(String(item.quantity), 270, rowY, { width: 50 });
+        doc.text(`${this.formatAmount(item.unitPrice)} XOF`, 320, rowY, {
+          width: 100,
+        });
+        doc.text(`${this.formatAmount(item.total)} XOF`, 420, rowY, {
+          width: 100,
+          align: 'right',
+        });
+        doc.moveDown(0.3);
+      }
 
-			doc.moveDown(0.5);
-			doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-			doc.moveDown(0.5);
+      doc.moveDown(0.5);
+      doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+      doc.moveDown(0.5);
 
-			// Totaux
-			doc.fontSize(10);
-			doc.text(`Sous-total : ${this.formatAmount(order.subtotal)} XOF`, { align: 'right' });
-			if (Number(order.discountAmount) > 0) {
-				doc.text(`Remise : -${this.formatAmount(order.discountAmount)} XOF`, { align: 'right' });
-			}
-			doc.text(`Livraison : ${this.formatAmount(order.shippingAmount)} XOF`, { align: 'right' });
-			doc.font('Helvetica-Bold').text(`TOTAL PAYÉ : ${this.formatAmount(order.total)} XOF`, { align: 'right' });
+      // Totaux
+      doc.fontSize(10);
+      doc.text(`Sous-total : ${this.formatAmount(order.subtotal)} XOF`, {
+        align: 'right',
+      });
+      if (Number(order.discountAmount) > 0) {
+        doc.text(`Remise : -${this.formatAmount(order.discountAmount)} XOF`, {
+          align: 'right',
+        });
+      }
+      doc.text(`Livraison : ${this.formatAmount(order.shippingAmount)} XOF`, {
+        align: 'right',
+      });
+      doc
+        .font('Helvetica-Bold')
+        .text(`TOTAL PAYÉ : ${this.formatAmount(order.total)} XOF`, {
+          align: 'right',
+        });
 
-			doc.end();
-		});
-	}
+      doc.end();
+    });
+  }
 
-	async sendPaymentConfirmation(order: any) {
-		const recipientEmail = order.customerEmail || order.user?.email;
+  async sendPaymentConfirmation(order: any) {
+    const recipientEmail = order.customerEmail || order.user?.email;
 
-		if (!recipientEmail) {
-			this.logger.warn(`Impossible d'envoyer la confirmation de paiement pour ${order.orderNumber} : aucune adresse email.`);
-			return false;
-		}
+    if (!recipientEmail) {
+      this.logger.warn(
+        `Impossible d'envoyer la confirmation de paiement pour ${order.orderNumber} : aucune adresse email.`,
+      );
+      return false;
+    }
 
-		const subject = `Paiement confirmé - Commande ${order.orderNumber} - Hayat Store`;
-		const htmlContent = this.generateReceiptHtml(order);
-		const pdfBuffer = await this.generateInvoicePdf(order);
+    const subject = `Paiement confirmé - Commande ${order.orderNumber} - Hayat Store`;
+    const htmlContent = this.generateReceiptHtml(order);
+    const pdfBuffer = await this.generateInvoicePdf(order);
 
-		if (!this.transporter) {
-			this.logger.log(`[SIMULATION EMAIL PAIEMENT CONFIRMÉ ${order.orderNumber}] Destinataire: ${recipientEmail}`);
-			return true;
-		}
+    if (!this.transporter) {
+      this.logger.log(
+        `[SIMULATION EMAIL PAIEMENT CONFIRMÉ ${order.orderNumber}] Destinataire: ${recipientEmail}`,
+      );
+      return true;
+    }
 
-		try {
-			await this.transporter.sendMail({
-				from: this.from,
-				to: recipientEmail,
-				subject,
-				html: htmlContent,
-				attachments: [{
-					filename: `facture-${order.orderNumber}.pdf`,
-					content: pdfBuffer,
-					contentType: 'application/pdf',
-				}],
-			});
-			this.logger.log(`Email de confirmation de paiement envoyé à ${recipientEmail} (Commande ${order.orderNumber}).`);
-			return true;
-		} catch (error) {
-			this.logger.error(`Échec de l'envoi de l'email à ${recipientEmail} pour la commande ${order.orderNumber}`, error);
-			return false;
-		}
-	}
+    try {
+      await this.transporter.sendMail({
+        from: this.from,
+        to: recipientEmail,
+        subject,
+        html: htmlContent,
+        attachments: [
+          {
+            filename: `facture-${order.orderNumber}.pdf`,
+            content: pdfBuffer,
+            contentType: 'application/pdf',
+          },
+        ],
+      });
+      this.logger.log(
+        `Email de confirmation de paiement envoyé à ${recipientEmail} (Commande ${order.orderNumber}).`,
+      );
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Échec de l'envoi de l'email à ${recipientEmail} pour la commande ${order.orderNumber}`,
+        error,
+      );
+      return false;
+    }
+  }
 
-	private generateReceiptHtml(order: any): string {
-		const itemsList = (order.items || [])
-			.map(
-				(item: any) => `
+  private generateReceiptHtml(order: any): string {
+    const itemsList = (order.items || [])
+      .map(
+        (item: any) => `
 			<tr>
 				<td style="padding: 10px; border-bottom: 1px solid #eeeeee;">
 					<strong>${item.productName}</strong> ${item.variantName ? `<br><small style="color: #666;">Variante: ${item.variantName}</small>` : ''}
@@ -156,12 +202,14 @@ export class MailService {
 				<td style="padding: 10px; border-bottom: 1px solid #eeeeee; text-align: right; font-weight: bold;">${this.formatAmount(item.total)} XOF</td>
 			</tr>
 		`,
-			)
-			.join('');
+      )
+      .join('');
 
-		const customerName = `${order.shippingFirstName || ''} ${order.shippingLastName || ''}`.trim() || 'Cher(e) Client(e)';
+    const customerName =
+      `${order.shippingFirstName || ''} ${order.shippingLastName || ''}`.trim() ||
+      'Cher(e) Client(e)';
 
-		return `
+    return `
 		<!DOCTYPE html>
 		<html lang="fr">
 		<head>
@@ -236,62 +284,76 @@ export class MailService {
 		</body>
 		</html>
 		`;
-	}
+  }
 
-	async sendPasswordResetEmail(email: string, firstName: string | null, resetUrl: string): Promise<boolean> {
-		const subject = 'Réinitialisation de votre mot de passe - Hayat Store';
-		const htmlContent = this.generatePasswordResetHtml(firstName, resetUrl);
+  async sendPasswordResetEmail(
+    email: string,
+    firstName: string | null,
+    resetUrl: string,
+  ): Promise<boolean> {
+    const subject = 'Réinitialisation de votre mot de passe - Hayat Store';
+    const htmlContent = this.generatePasswordResetHtml(firstName, resetUrl);
 
-		if (!this.transporter) {
-			this.logger.log(`[SIMULATION EMAIL RESET PASSWORD] Destinataire: ${email} | URL: ${resetUrl}`);
-			return true;
-		}
+    if (!this.transporter) {
+      this.logger.log(
+        `[SIMULATION EMAIL RESET PASSWORD] Destinataire: ${email} | URL: ${resetUrl}`,
+      );
+      return true;
+    }
 
-		try {
-			await this.transporter.sendMail({
-				from: this.from,
-				to: email,
-				subject,
-				html: htmlContent,
-			});
-			this.logger.log(`Email de réinitialisation de mot de passe envoyé à ${email}.`);
-			return true;
-		} catch (error) {
-			this.logger.error(`Échec de l'envoi de l'email de réinitialisation à ${email}`, error);
-			return false;
-		}
-	}
+    try {
+      await this.transporter.sendMail({
+        from: this.from,
+        to: email,
+        subject,
+        html: htmlContent,
+      });
+      this.logger.log(
+        `Email de réinitialisation de mot de passe envoyé à ${email}.`,
+      );
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Échec de l'envoi de l'email de réinitialisation à ${email}`,
+        error,
+      );
+      return false;
+    }
+  }
 
-	async sendWelcomeEmail(
-		email: string,
-		firstName: string | null,
-	): Promise<boolean> {
-		const subject = 'Bienvenue chez Hayat Store !';
-		const htmlContent = this.generateWelcomeHtml(firstName);
+  async sendWelcomeEmail(
+    email: string,
+    firstName: string | null,
+  ): Promise<boolean> {
+    const subject = 'Bienvenue chez Hayat Store !';
+    const htmlContent = this.generateWelcomeHtml(firstName);
 
-		if (!this.transporter) {
-			this.logger.log(`[SIMULATION EMAIL BIENVENUE] Destinataire: ${email}`);
-			return true;
-		}
+    if (!this.transporter) {
+      this.logger.log(`[SIMULATION EMAIL BIENVENUE] Destinataire: ${email}`);
+      return true;
+    }
 
-		try {
-			await this.transporter.sendMail({
-				from: this.from,
-				to: email,
-				subject,
-				html: htmlContent,
-			});
-			this.logger.log(`Email de bienvenue envoyé à ${email}.`);
-			return true;
-		} catch (error) {
-			this.logger.error(`Échec de l'envoi de l'email de bienvenue à ${email}`, error);
-			return false;
-		}
-	}
+    try {
+      await this.transporter.sendMail({
+        from: this.from,
+        to: email,
+        subject,
+        html: htmlContent,
+      });
+      this.logger.log(`Email de bienvenue envoyé à ${email}.`);
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Échec de l'envoi de l'email de bienvenue à ${email}`,
+        error,
+      );
+      return false;
+    }
+  }
 
-	private generateWelcomeHtml(firstName: string | null): string {
-		const name = firstName || 'Cher(e) Client(e)';
-		return `
+  private generateWelcomeHtml(firstName: string | null): string {
+    const name = firstName || 'Cher(e) Client(e)';
+    return `
 		<!DOCTYPE html>
 		<html lang="fr">
 		<head>
@@ -335,11 +397,14 @@ export class MailService {
 		</body>
 		</html>
 		`;
-	}
+  }
 
-	private generatePasswordResetHtml(firstName: string | null, resetUrl: string): string {
-		const name = firstName || 'Cher(e) Client(e)';
-		return `
+  private generatePasswordResetHtml(
+    firstName: string | null,
+    resetUrl: string,
+  ): string {
+    const name = firstName || 'Cher(e) Client(e)';
+    return `
 		<!DOCTYPE html>
 		<html lang="fr">
 		<head>
@@ -399,5 +464,5 @@ export class MailService {
 		</body>
 		</html>
 		`;
-	}
+  }
 }

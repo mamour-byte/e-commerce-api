@@ -17,7 +17,9 @@ export class ImagesService {
 
     const uploaded = await this.cloudinary.uploadImage(file);
 
-    const imageCount = await this.prisma.productImage.count({ where: { productId } });
+    const imageCount = await this.prisma.productImage.count({
+      where: { productId },
+    });
 
     return this.prisma.productImage.create({
       data: {

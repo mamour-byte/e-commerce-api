@@ -10,20 +10,20 @@ import { StatsService } from './stats.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN, UserRole.STAFF)
 export class StatsController {
-	constructor(private readonly statsService: StatsService) {}
+  constructor(private readonly statsService: StatsService) {}
 
-	@Get('dashboard')
-	getDashboard(@Query() query: StatsQueryDto) {
-		return this.statsService.getDashboard(query);
-	}
+  @Get('dashboard')
+  getDashboard(@Query() query: StatsQueryDto) {
+    return this.statsService.getDashboard(query);
+  }
 
-	@Get('sales')
-	getSales(@Query() query: StatsQueryDto) {
-		return this.statsService.getSales(query);
-	}
+  @Get('sales')
+  getSales(@Query() query: StatsQueryDto) {
+    return this.statsService.getSales(query);
+  }
 
-	@Get('products')
-	getProducts(@Query() query: StatsQueryDto) {
-		return this.statsService.getProducts(query);
-	}
+  @Get('products')
+  getProducts(@Query() query: StatsQueryDto) {
+    return this.statsService.getProducts(query);
+  }
 }

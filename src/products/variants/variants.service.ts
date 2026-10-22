@@ -11,18 +11,17 @@ import { UpdateProductVariantDto } from '../dto/update-product-variant.dto';
 
 @Injectable()
 export class VariantsService {
-  constructor(
-    private readonly prisma: PrismaService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  async create(
-    productId: string,
-    dto: CreateProductVariantDto,
-  ) {
-    const product = await this.prisma.product.findUnique({ where: { id: productId } });
+  async create(productId: string, dto: CreateProductVariantDto) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+    });
     if (!product) throw new NotFoundException('Produit introuvable.');
 
-    const existing = await this.prisma.productVariant.findUnique({ where: { sku: dto.sku } });
+    const existing = await this.prisma.productVariant.findUnique({
+      where: { sku: dto.sku },
+    });
     if (existing) throw new ConflictException('Ce SKU est déjà utilisé.');
 
     const variant = await this.prisma.productVariant.create({
@@ -55,7 +54,9 @@ export class VariantsService {
   }
 
   async findOne(id: string) {
-    const variant = await this.prisma.productVariant.findUnique({ where: { id } });
+    const variant = await this.prisma.productVariant.findUnique({
+      where: { id },
+    });
     if (!variant) throw new NotFoundException('Variante introuvable.');
     return variant;
   }

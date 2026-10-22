@@ -11,12 +11,16 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 
 @Injectable()
 export class CategoriesService {
-  constructor(
-    private readonly prisma: PrismaService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateCategoryDto) {
-    let slug = dto.slug || dto.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+    let slug =
+      dto.slug ||
+      dto.name
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)+/g, '');
     if (!slug) {
       slug = `category-${Date.now()}`;
     }
@@ -33,9 +37,12 @@ export class CategoriesService {
       }
     }
 
-    let parentId = dto.parentId && dto.parentId.trim() !== '' ? dto.parentId : undefined;
+    let parentId =
+      dto.parentId && dto.parentId.trim() !== '' ? dto.parentId : undefined;
     if (parentId) {
-      const parentExists = await this.prisma.category.findUnique({ where: { id: parentId } });
+      const parentExists = await this.prisma.category.findUnique({
+        where: { id: parentId },
+      });
       if (!parentExists) {
         parentId = undefined;
       }
@@ -148,9 +155,7 @@ export class CategoriesService {
     });
 
     if (!category) {
-      throw new NotFoundException(
-        'Catégorie introuvable.',
-      );
+      throw new NotFoundException('Catégorie introuvable.');
     }
 
     return category;
@@ -168,7 +173,9 @@ export class CategoriesService {
 
     if (dto.parentId) {
       if (dto.parentId === id)
-        throw new ConflictException('Une catégorie ne peut pas être son propre parent.');
+        throw new ConflictException(
+          'Une catégorie ne peut pas être son propre parent.',
+        );
       await this.validateParent(dto.parentId);
     }
 
@@ -228,15 +235,11 @@ export class CategoriesService {
     });
 
     if (!parent) {
-      throw new NotFoundException(
-        'Catégorie parente introuvable.',
-      );
+      throw new NotFoundException('Catégorie parente introuvable.');
     }
 
     if (!parent.isActive) {
-      throw new ConflictException(
-        'La catégorie parente est désactivée.',
-      );
+      throw new ConflictException('La catégorie parente est désactivée.');
     }
   }
 }

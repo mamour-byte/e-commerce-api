@@ -29,10 +29,7 @@ export class NotificationsController {
     @CurrentUser() user: AuthUser,
     @Query('unreadOnly') unreadOnly?: string,
   ) {
-    return this.notificationsService.findAll(
-      user.id,
-      unreadOnly === 'true',
-    );
+    return this.notificationsService.findAll(user.id, unreadOnly === 'true');
   }
 
   /**

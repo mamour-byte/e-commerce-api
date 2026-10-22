@@ -3,39 +3,39 @@ import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { FulfillmentType, OrderStatus, PaymentStatus } from '@prisma/client';
 
 export class OrderQueryDto {
-	@Type(() => Number)
-	@IsInt()
-	@Min(1)
-	@IsOptional()
-	page?: number = 1;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  page?: number = 1;
 
-	@Type(() => Number)
-	@IsInt()
-	@Min(1)
-	@IsOptional()
-	limit?: number = 10;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  limit?: number = 10;
 
-	@IsEnum(OrderStatus)
-	@IsOptional()
-	status?: OrderStatus;
+  @IsEnum(OrderStatus)
+  @IsOptional()
+  status?: OrderStatus;
 
-	@IsEnum(PaymentStatus)
-	@IsOptional()
-	paymentStatus?: PaymentStatus;
+  @IsEnum(PaymentStatus)
+  @IsOptional()
+  paymentStatus?: PaymentStatus;
 
-	@IsEnum(FulfillmentType)
-	@IsOptional()
-	fulfillmentType?: FulfillmentType;
+  @IsEnum(FulfillmentType)
+  @IsOptional()
+  fulfillmentType?: FulfillmentType;
 
-	@IsString()
-	@IsOptional()
-	search?: string;
+  @IsString()
+  @IsOptional()
+  search?: string;
 
-	@IsString()
-	@IsOptional()
-	sortBy?: string = 'createdAt';
+  @IsString()
+  @IsOptional()
+  sortBy?: string = 'createdAt';
 
-	@IsString()
-	@IsOptional()
-	sortOrder?: 'asc' | 'desc' = 'desc';
+  @IsString()
+  @IsOptional()
+  sortOrder?: 'asc' | 'desc' = 'desc';
 }

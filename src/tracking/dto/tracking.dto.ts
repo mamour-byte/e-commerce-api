@@ -197,6 +197,16 @@ export class TrackEventsDto {
   @IsOptional()
   userId?: string;
 
+  @IsString()
+  @MaxLength(512)
+  @IsOptional()
+  fbp?: string;
+
+  @IsString()
+  @MaxLength(512)
+  @IsOptional()
+  fbc?: string;
+
   @IsArray()
   @ArrayMaxSize(MAX_EVENTS_PER_BATCH)
   @ValidateNested({ each: true })

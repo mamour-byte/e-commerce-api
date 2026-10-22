@@ -566,7 +566,9 @@ export class OrdersService {
         previousStatus !== OrderStatus.REFUNDED
       ) {
         for (const item of order.items) {
-          if (!(await this.tracksInventory(tx, item.variantId, item.productId))) {
+          if (
+            !(await this.tracksInventory(tx, item.variantId, item.productId))
+          ) {
             continue;
           }
 
@@ -716,7 +718,10 @@ export class OrdersService {
           if (cart.userId !== userId) {
             throw new ForbiddenException('Ce panier ne vous appartient pas.');
           }
-        } else if (!cart.userId && (!dto.sessionId || cart.sessionId !== dto.sessionId)) {
+        } else if (
+          !cart.userId &&
+          (!dto.sessionId || cart.sessionId !== dto.sessionId)
+        ) {
           throw new ForbiddenException('Session du panier invalide.');
         }
       }
@@ -776,7 +781,9 @@ export class OrdersService {
       }
 
       // Vérification de la disponibilité du stock (uniquement si le stock est suivi)
-      const trackInventory = variant ? variant.trackInventory : product.trackInventory;
+      const trackInventory = variant
+        ? variant.trackInventory
+        : product.trackInventory;
       const availableStock = variant ? variant.quantity : product.quantity;
 
       if (trackInventory && item.quantity > availableStock) {
@@ -802,7 +809,9 @@ export class OrdersService {
         sku,
         quantity: item.quantity,
         unitPrice,
-        trackInventory: variant ? variant.trackInventory : product.trackInventory,
+        trackInventory: variant
+          ? variant.trackInventory
+          : product.trackInventory,
         productSnapshot: {
           productId: product.id,
           name: product.name,

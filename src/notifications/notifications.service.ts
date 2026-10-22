@@ -100,7 +100,11 @@ export class NotificationsService {
   }
 
   // Helper methods for common notification types
-  async notifyOrderCreated(orderId: string, orderNumber: string, sendToAdmin = true) {
+  async notifyOrderCreated(
+    orderId: string,
+    orderNumber: string,
+    sendToAdmin = true,
+  ) {
     return this.create({
       type: NotificationType.ORDER_CREATED,
       title: 'Nouvelle commande',
@@ -111,7 +115,11 @@ export class NotificationsService {
     });
   }
 
-  async notifyOrderConfirmed(orderId: string, orderNumber: string, userId?: string) {
+  async notifyOrderConfirmed(
+    orderId: string,
+    orderNumber: string,
+    userId?: string,
+  ) {
     return this.create({
       userId,
       type: NotificationType.ORDER_CONFIRMED,
@@ -122,7 +130,11 @@ export class NotificationsService {
     });
   }
 
-  async notifyOrderInDelivery(orderId: string, orderNumber: string, userId?: string) {
+  async notifyOrderInDelivery(
+    orderId: string,
+    orderNumber: string,
+    userId?: string,
+  ) {
     return this.create({
       userId,
       type: NotificationType.ORDER_IN_DELIVERY,
@@ -133,7 +145,11 @@ export class NotificationsService {
     });
   }
 
-  async notifyOrderDelivered(orderId: string, orderNumber: string, userId?: string) {
+  async notifyOrderDelivered(
+    orderId: string,
+    orderNumber: string,
+    userId?: string,
+  ) {
     return this.create({
       userId,
       type: NotificationType.ORDER_DELIVERED,
@@ -144,7 +160,11 @@ export class NotificationsService {
     });
   }
 
-  async notifyOrderCancelled(orderId: string, orderNumber: string, userId?: string) {
+  async notifyOrderCancelled(
+    orderId: string,
+    orderNumber: string,
+    userId?: string,
+  ) {
     return this.create({
       userId,
       type: NotificationType.ORDER_CANCELLED,
@@ -155,7 +175,11 @@ export class NotificationsService {
     });
   }
 
-  async notifyPaymentReceived(orderId: string, orderNumber: string, userId?: string) {
+  async notifyPaymentReceived(
+    orderId: string,
+    orderNumber: string,
+    userId?: string,
+  ) {
     return this.create({
       userId,
       type: NotificationType.PAYMENT_RECEIVED,

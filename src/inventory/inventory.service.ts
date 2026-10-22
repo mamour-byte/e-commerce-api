@@ -94,7 +94,7 @@ export class InventoryService {
 
       if (dto.newQuantity < 0) {
         throw new BadRequestException(
-          "La nouvelle quantité ne peut pas être négative.",
+          'La nouvelle quantité ne peut pas être négative.',
         );
       }
 
@@ -134,7 +134,12 @@ export class InventoryService {
         });
       }
 
-      return { productId: dto.productId, variantId: dto.variantId ?? null, quantity: dto.newQuantity, delta };
+      return {
+        productId: dto.productId,
+        variantId: dto.variantId ?? null,
+        quantity: dto.newQuantity,
+        delta,
+      };
     });
   }
 
@@ -188,7 +193,12 @@ export class InventoryService {
         });
       }
 
-      return { productId: dto.productId, variantId: dto.variantId ?? null, quantity: newQuantity, added: dto.quantity };
+      return {
+        productId: dto.productId,
+        variantId: dto.variantId ?? null,
+        quantity: newQuantity,
+        added: dto.quantity,
+      };
     });
   }
 

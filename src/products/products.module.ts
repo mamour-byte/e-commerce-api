@@ -10,19 +10,8 @@ import { ImagesService } from './images/images.service';
 
 @Module({
   imports: [PrismaModule],
-  controllers: [
-    ProductsController,
-    VariantsController,
-    ImagesController,
-  ],
-  providers: [
-    ProductsService,
-    VariantsService,
-    ImagesService,
-  ],
-  exports: [
-    ProductsService,
-    VariantsService,
-  ],
+  controllers: [ProductsController, VariantsController, ImagesController],
+  providers: [ProductsService, VariantsService, ImagesService],
+  exports: [ProductsService, VariantsService],
 })
 export class ProductsModule {}

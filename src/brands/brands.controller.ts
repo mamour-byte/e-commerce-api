@@ -22,9 +22,7 @@ import { UserRole } from '@prisma/client';
 
 @Controller('brands')
 export class BrandsController {
-  constructor(
-    private readonly brandsService: BrandsService,
-  ) {}
+  constructor(private readonly brandsService: BrandsService) {}
 
   @Get()
   findAll() {
@@ -46,10 +44,7 @@ export class BrandsController {
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.STAFF)
-  update(
-    @Param('id') id: string,
-    @Body() dto: UpdateBrandDto,
-  ) {
+  update(@Param('id') id: string, @Body() dto: UpdateBrandDto) {
     return this.brandsService.update(id, dto);
   }
 

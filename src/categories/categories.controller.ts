@@ -22,9 +22,7 @@ import { UserRole } from '@prisma/client';
 
 @Controller('categories')
 export class CategoriesController {
-  constructor(
-    private readonly categoriesService: CategoriesService,
-  ) {}
+  constructor(private readonly categoriesService: CategoriesService) {}
 
   @Get()
   findAll() {
@@ -51,14 +49,8 @@ export class CategoriesController {
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.STAFF)
-  update(
-    @Param('id') id: string,
-    @Body() dto: UpdateCategoryDto,
-  ) {
-    return this.categoriesService.update(
-      id,
-      dto,
-    );
+  update(@Param('id') id: string, @Body() dto: UpdateCategoryDto) {
+    return this.categoriesService.update(id, dto);
   }
 
   @Delete(':id')
