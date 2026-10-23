@@ -25,10 +25,11 @@ import { InventoryModule } from './inventory/inventory.module';
 import { TrackingModule } from './tracking/tracking.module';
 import { MarketingModule } from './marketing/marketing.module';
 import { SitemapModule } from './sitemap/sitemap.module';
+import { validateEnvironment } from './config/production-env';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnvironment }),
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([
       {
