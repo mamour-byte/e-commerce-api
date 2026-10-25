@@ -162,33 +162,15 @@ export class ProductsService {
     } = query;
 
     const isStaff = isStaffRole(viewerRole);
+    const searchTerm = search?.trim();
 
-    const where: Prisma.ProductWhereInput = {
-      // Le catalogue public n'expose que les produits ACTIVE.
-      // Seuls ADMIN/STAFF peuvent filtrer sur tous les statuts (DRAFT…).
+    const baseWhere: Prisma.ProductWhereInput = {
       status:
         status && status !== 'ALL'
           ? (status as ProductStatus)
           : isStaff
             ? undefined
             : ProductStatus.ACTIVE,
-
-      ...(search && {
-        OR: [
-          {
-            name: {
-              contains: search,
-              mode: 'insensitive' as const,
-            },
-          },
-          {
-            description: {
-              contains: search,
-              mode: 'insensitive' as const,
-            },
-          },
-        ],
-      }),
 
       ...(categoryId && {
         categoryId,
@@ -218,9 +200,128 @@ export class ProductsService {
 
     const skip = (page - 1) * limit;
 
+    if (searchTerm && searchTerm.length > 0) {
+      const searchPattern = `%${searchTerm.replace(/[%_\\]/g, '\\$&')}%`;
+
+      const baseConditions: Prisma.Sql[] = [];
+
+      if (baseWhere.status) {
+        baseConditions.push(
+          Prisma.sql`p."status" = ${baseWhere.status}::"ProductStatus"`,
+        );
+      } else if (!isStaff) {
+        baseConditions.push(
+          Prisma.sql`p."status" = 'ACTIVE'::"ProductStatus"`,
+        );
+      }
+
+      if (categoryId) {
+        baseConditions.push(Prisma.sql`p."categoryId" = ${categoryId}`);
+      }
+
+      if (brandId) {
+        baseConditions.push(Prisma.sql`p."brandId" = ${brandId}`);
+      }
+
+      if (minPrice !== undefined) {
+        baseConditions.push(Prisma.sql`p."price" >= ${minPrice}`);
+      }
+
+      if (maxPrice !== undefined) {
+        baseConditions.push(Prisma.sql`p."price" <= ${maxPrice}`);
+      }
+
+      if (featured !== undefined) {
+        baseConditions.push(Prisma.sql`p."isFeatured" = ${featured}`);
+      }
+
+      const searchCondition = Prisma.sql`(unaccent(lower(p."name")) LIKE unaccent(lower(${searchPattern})) OR unaccent(lower(COALESCE(p."description", ''))) LIKE unaccent(lower(${searchPattern})))`;
+
+      const whereClause =
+        baseConditions.length > 0
+          ? Prisma.sql`${Prisma.join(baseConditions, ' AND ')} AND ${searchCondition}`
+          : searchCondition;
+
+      const countResult = await this.prisma.$queryRaw<[{ count: bigint }]>`
+        SELECT COUNT(*)::bigint as count
+        FROM "Product" p
+        WHERE ${whereClause}
+      `;
+      const total = Number(countResult[0]?.count || 0);
+
+      let products = await this.prisma.$queryRaw<any[]>`
+        SELECT 
+          p.*,
+          json_build_object(
+            'id', c."id",
+            'name', c."name",
+            'slug', c."slug"
+          ) as category,
+          json_build_object(
+            'id', b."id",
+            'name', b."name",
+            'slug', b."slug"
+          ) as brand,
+          COALESCE(
+            (
+              SELECT json_agg(
+                json_build_object(
+                  'id', pi."id",
+                  'url', pi."url",
+                  'publicId', pi."publicId",
+                  'position', pi."position",
+                  'isPrimary', pi."isPrimary"
+                ) ORDER BY pi."position" ASC
+              )
+              FROM "ProductImage" pi
+              WHERE pi."productId" = p."id"
+            ),
+            '[]'::json
+          ) as images,
+          COALESCE(
+            (
+              SELECT json_agg(
+                json_build_object(
+                  'id', pv."id",
+                  'name', pv."name",
+                  'price', pv."price",
+                  'sku', pv."sku",
+                  'quantity', pv."quantity",
+                  'isActive', pv."isActive"
+                )
+              )
+              FROM "ProductVariant" pv
+              WHERE pv."productId" = p."id"
+            ),
+            '[]'::json
+          ) as variants
+        FROM "Product" p
+        LEFT JOIN "Category" c ON c."id" = p."categoryId"
+        LEFT JOIN "Brand" b ON b."id" = p."brandId"
+        WHERE ${whereClause}
+        ORDER BY p."createdAt" DESC
+        OFFSET ${skip}
+        LIMIT ${limit}
+      `;
+
+      if (!isStaff) {
+        products = products.map(({ costPrice, ...rest }: any) => rest);
+      }
+
+      return {
+        data: products,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
+    }
+
     const [products, total] = await Promise.all([
       this.prisma.product.findMany({
-        where,
+        where: baseWhere,
         skip,
         take: limit,
 
@@ -243,7 +344,7 @@ export class ProductsService {
       }),
 
       this.prisma.product.count({
-        where,
+        where: baseWhere,
       }),
     ]);
 
