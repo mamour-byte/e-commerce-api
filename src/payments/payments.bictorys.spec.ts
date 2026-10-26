@@ -606,6 +606,43 @@ describe('PaymentsService — flux Bictorys', () => {
       ).toBeGreaterThan(now.getTime());
     });
 
+    it('prend en charge les paiements historiques sans nextReconciliationAt', async () => {
+      mockPrismaService.payment.findMany.mockResolvedValue([
+        expiredCandidate({
+          nextReconciliationAt: null,
+          expiresAt: null,
+          createdAt: new Date('2026-01-01T10:00:00.000Z'),
+        }),
+      ]);
+      mockBictorysService.getTransaction.mockResolvedValue({
+        id: 'tx_1',
+        status: 'pending',
+        amount: 15000,
+        currency: 'XOF',
+        raw: {},
+      });
+
+      const summary = await service.expireAbandonedPayments(now);
+
+      const findArgs = lastCallArgs(mockPrismaService.payment.findMany);
+      const where = findArgs.where as {
+        OR?: Array<{
+          nextReconciliationAt?: null;
+          expiresAt?: null;
+          createdAt?: { lte: Date };
+        }>;
+      };
+      expect(
+        where.OR?.some(
+          (clause) =>
+            clause.nextReconciliationAt === null &&
+            clause.expiresAt === null &&
+            clause.createdAt?.lte instanceof Date,
+        ),
+      ).toBe(true);
+      expect(summary).toMatchObject({ checked: 1, expired: 1 });
+    });
+
     it('accepte un webhook tardif après expiration locale et confirme la vente', async () => {
       const expiredPayment = {
         ...payment,

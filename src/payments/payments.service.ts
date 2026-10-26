@@ -751,10 +751,16 @@ export class PaymentsService {
     pending: number;
     errors: number;
   }> {
+    // Reprise des paiements créés avant l'ajout du cycle de vie (ou pendant un
+    // déploiement progressif) : sans cette borne, un `nextReconciliationAt`
+    // resté NULL ne serait jamais traité par le cron.
+    const legacyCutoff = new Date(
+      now.getTime() - (this.paymentExpirationMs + this.paymentExpiryGraceMs),
+    );
+
     const payments = await this.prisma.payment.findMany({
       where: {
         status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
-        nextReconciliationAt: { lte: now },
         provider: {
           in: [
             PaymentProvider.BICTORYS,
@@ -762,6 +768,15 @@ export class PaymentsService {
             PaymentProvider.ORANGE_MONEY,
           ],
         },
+        OR: [
+          { nextReconciliationAt: { lte: now } },
+          { expiresAt: { lte: now } },
+          {
+            nextReconciliationAt: null,
+            expiresAt: null,
+            createdAt: { lte: legacyCutoff },
+          },
+        ],
       },
       include: { order: true },
       orderBy: { nextReconciliationAt: 'asc' },
