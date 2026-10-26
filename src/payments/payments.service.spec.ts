@@ -59,6 +59,7 @@ describe('PaymentsService', () => {
     verifyWebhookSecret: jest.fn(),
     isSuccessfulStatus: jest.fn(),
     isFailedStatus: jest.fn(),
+    isExpiredStatus: jest.fn(),
   };
 
   const mockMailService = {

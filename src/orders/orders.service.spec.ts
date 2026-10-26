@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { OrdersService } from './orders.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 describe('OrdersService', () => {
   let service: OrdersService;
@@ -38,6 +39,14 @@ describe('OrdersService', () => {
     sendOrderReceipt: jest.fn(),
   };
 
+  const mockNotificationsService = {
+    notifyOrderCreated: jest.fn(),
+    notifyOrderConfirmed: jest.fn(),
+    notifyOrderInDelivery: jest.fn(),
+    notifyOrderDelivered: jest.fn(),
+    notifyOrderCancelled: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -49,6 +58,10 @@ describe('OrdersService', () => {
         {
           provide: MailService,
           useValue: mockMailService,
+        },
+        {
+          provide: NotificationsService,
+          useValue: mockNotificationsService,
         },
       ],
     }).compile();

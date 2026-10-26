@@ -5,6 +5,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { TrackingModule } from '../tracking/tracking.module';
 import { PaymentsController } from './payments.controller';
+import { PaymentsJobsService } from './payments.jobs';
 import { PaymentsService } from './payments.service';
 import { BictorysService } from './providers/bictorys.service';
 import { OrangeMoneyService } from './providers/orange-money.service';
@@ -21,6 +22,7 @@ import { WaveService } from './providers/wave.service';
   controllers: [PaymentsController],
   providers: [
     PaymentsService,
+    PaymentsJobsService,
     WaveService,
     OrangeMoneyService,
     BictorysService,

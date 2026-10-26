@@ -10,6 +10,10 @@ import {
   normalizeBaseUrl,
 } from '../checkout-redirect';
 
+function firstArrayItem(value: unknown): unknown {
+  return Array.isArray(value) ? (value as unknown[])[0] : undefined;
+}
+
 /**
  * Article d'une commande transmis à Bictorys (affiché sur la page de paiement).
  */
@@ -288,19 +292,23 @@ export class BictorysService {
   ): Promise<BictorysTransaction | null> {
     if (!this.isConfigured) return null;
     try {
-      const data = await this.request<{ data?: BictorysTransactionResponse[]; items?: BictorysTransactionResponse[] } | BictorysTransactionResponse>(
+      const data = await this.request<unknown>(
         'GET',
         `/transactions?paymentReference=${encodeURIComponent(paymentReference)}&limit=1`,
       );
-      // API may return a list or a single object
-      const list =
-        (data as any)?.data ??
-        (data as any)?.items ??
-        (Array.isArray(data) ? data : null);
-      const item: BictorysTransactionResponse | undefined = list
-        ? list[0]
-        : (data as BictorysTransactionResponse);
-      if (!item?.id) return null;
+      // L'API peut renvoyer une liste ({ data } / { items }) ou un objet seul.
+      const record =
+        data && typeof data === 'object'
+          ? (data as Record<string, unknown>)
+          : {};
+      const candidate =
+        firstArrayItem(record.data) ??
+        firstArrayItem(record.items) ??
+        firstArrayItem(data) ??
+        data;
+      if (!candidate || typeof candidate !== 'object') return null;
+      const item = candidate as BictorysTransactionResponse;
+      if (!item.id) return null;
       return {
         id: String(item.id),
         status: String(item.status ?? '').toLowerCase(),
@@ -309,7 +317,7 @@ export class BictorysService {
         paymentReference: item.paymentReference ?? null,
         merchantReference: item.merchantReference ?? null,
         pspName: item.pspName ?? null,
-        raw: item as Record<string, unknown>,
+        raw: item,
       };
     } catch (error) {
       this.logger.error(
@@ -346,6 +354,11 @@ export class BictorysService {
 
   isFailedStatus(status: string | undefined | null): boolean {
     return FAILED_STATUSES.includes(String(status ?? '').toLowerCase());
+  }
+
+  /** Statut d'expiration explicite renvoyé par Bictorys. */
+  isExpiredStatus(status: string | undefined | null): boolean {
+    return String(status ?? '').toLowerCase() === 'expired';
   }
 
   /**

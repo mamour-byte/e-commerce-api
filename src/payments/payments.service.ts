@@ -7,6 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import {
+  InventoryMovementType,
   OrderStatus,
   PaymentProvider,
   PaymentStatus,
@@ -46,6 +47,12 @@ export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
   /** URL finale atteinte par le navigateur après paiement (front). */
   private readonly browserFrontendUrl: string;
+  /** Fenêtre pendant laquelle le client peut payer. */
+  private readonly paymentExpirationMs: number;
+  /** Délai de sécurité avant de déclarer un paiement abandonné. */
+  private readonly paymentExpiryGraceMs: number;
+  /** Intervalle entre deux vérifications serveur d'un paiement non définitif. */
+  private readonly reconciliationRetryMs: number;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -62,6 +69,18 @@ export class PaymentsService {
         this.config.get<string>('FRONTEND_URL') ||
         'http://localhost:5173',
     );
+    this.paymentExpirationMs =
+      readPositiveMinutes(this.config, 'PAYMENT_EXPIRATION_MINUTES', 15) *
+      60_000;
+    this.paymentExpiryGraceMs =
+      readPositiveMinutes(this.config, 'PAYMENT_EXPIRY_GRACE_MINUTES', 10) *
+      60_000;
+    this.reconciliationRetryMs =
+      readPositiveMinutes(
+        this.config,
+        'PAYMENT_RECONCILIATION_RETRY_MINUTES',
+        15,
+      ) * 60_000;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -102,6 +121,7 @@ export class PaymentsService {
 
     const amount = Number(order.total);
     const currency = order.currency;
+    const deadlines = this.buildPaymentDeadlines();
 
     switch (dto.provider) {
       case PaymentProvider.WAVE: {
@@ -119,6 +139,8 @@ export class PaymentsService {
             amount: order.total,
             currency,
             status: PaymentStatus.PENDING,
+            expiresAt: deadlines.expiresAt,
+            nextReconciliationAt: deadlines.nextReconciliationAt,
             transactionId: waveSession.id,
             providerReference:
               waveSession.client_reference || order.orderNumber,
@@ -141,6 +163,7 @@ export class PaymentsService {
           status: payment.status,
           amount,
           currency,
+          expiresAt: payment.expiresAt,
         };
       }
 
@@ -159,6 +182,8 @@ export class PaymentsService {
             amount: order.total,
             currency,
             status: PaymentStatus.PENDING,
+            expiresAt: deadlines.expiresAt,
+            nextReconciliationAt: deadlines.nextReconciliationAt,
             transactionId: omResponse.pay_token,
             providerReference: omResponse.notif_token || order.orderNumber,
             metadata: {
@@ -180,6 +205,7 @@ export class PaymentsService {
           status: payment.status,
           amount,
           currency,
+          expiresAt: payment.expiresAt,
         };
       }
 
@@ -228,6 +254,8 @@ export class PaymentsService {
             amount: order.total,
             currency,
             status: PaymentStatus.PENDING,
+            expiresAt: deadlines.expiresAt,
+            nextReconciliationAt: deadlines.nextReconciliationAt,
             // paymentReference envoyé à Bictorys : clé de rapprochement webhook.
             providerReference: order.orderNumber,
             metadata: {
@@ -252,6 +280,7 @@ export class PaymentsService {
           status: payment.status,
           amount,
           currency,
+          expiresAt: payment.expiresAt,
         };
       }
 
@@ -285,6 +314,7 @@ export class PaymentsService {
           status: payment.status,
           amount,
           currency,
+          expiresAt: null,
           message:
             'Commande enregistrée avec succès. Le paiement sera effectué en espèces à la livraison.',
         };
@@ -301,7 +331,11 @@ export class PaymentsService {
   // WEBHOOK WAVE
   // ─────────────────────────────────────────────────────────────────────────
 
-  async handleWaveWebhook(signature: string, rawBody: string, payload: any) {
+  async handleWaveWebhook(
+    signature: string,
+    rawBody: string,
+    payload: Record<string, unknown>,
+  ) {
     const isValid = this.waveService.verifyWebhookSignature(signature, rawBody);
     if (!isValid) {
       this.logger.error('Signature Wave Webhook invalide');
@@ -310,13 +344,13 @@ export class PaymentsService {
 
     this.logger.log(`Webhook Wave reçu : ${JSON.stringify(payload)}`);
 
-    const eventType = payload.type || payload.event;
-    const data = payload.data || payload;
+    const eventType = payload.type ?? payload.event;
+    const data = (payload.data ?? payload) as Record<string, unknown>;
+    const transactionId = data.id as string | undefined;
+    const clientReference = data.client_reference as string | undefined;
+    const canIdentifyPayment = Boolean(transactionId || clientReference);
 
-    if (eventType === 'checkout.session.completed') {
-      const transactionId = data.id;
-      const clientReference = data.client_reference;
-
+    if (canIdentifyPayment && isProviderSuccessStatus(eventType)) {
       const payment = await this.prisma.payment.findFirst({
         where: {
           OR: [
@@ -331,6 +365,45 @@ export class PaymentsService {
       if (payment && payment.status !== PaymentStatus.PAID) {
         await this.confirmPayment(payment.id, payment.orderId, 'Wave Webhook');
       }
+
+      return { received: true };
+    }
+
+    const failureKind = resolveFailureKind(
+      eventType,
+      data.checkout_status,
+      data.status,
+    );
+
+    if (canIdentifyPayment && failureKind) {
+      const payment = await this.prisma.payment.findFirst({
+        where: {
+          OR: [
+            { transactionId },
+            { providerReference: clientReference },
+            { order: { orderNumber: clientReference } },
+          ],
+        },
+        include: { order: true },
+      });
+
+      if (payment && payment.status !== PaymentStatus.PAID) {
+        if (failureKind === 'expired') {
+          await this.markPaymentExpired(
+            payment.id,
+            payment.orderId,
+            `Wave : statut "${normalizeProviderStatus(data.checkout_status ?? data.status ?? eventType)}"`,
+          );
+        } else {
+          await this.markPaymentFailed(
+            payment.id,
+            payment.orderId,
+            `Wave : statut "${normalizeProviderStatus(data.checkout_status ?? data.status ?? eventType)}"`,
+          );
+        }
+      }
+
+      return { received: true };
     }
 
     return { received: true };
@@ -340,7 +413,10 @@ export class PaymentsService {
   // WEBHOOK ORANGE MONEY
   // ─────────────────────────────────────────────────────────────────────────
 
-  async handleOrangeMoneyWebhook(payload: any, signature?: string) {
+  async handleOrangeMoneyWebhook(
+    payload: Record<string, unknown>,
+    signature?: string,
+  ) {
     // Fail-closed : tant que les webhooks OM ne sont pas configurés
     // (ORANGE_MONEY_WEBHOOK_SECRET absent), aucun webhook n'est accepté.
     const secret = this.config.get<string>('ORANGE_MONEY_WEBHOOK_SECRET');
@@ -355,32 +431,53 @@ export class PaymentsService {
 
     this.logger.log(`Webhook Orange Money reçu : ${JSON.stringify(payload)}`);
 
-    const status = payload.status || payload.status_payment;
-    const orderIdRef = payload.order_id || payload.reference;
-    const payToken = payload.pay_token || payload.notif_token || payload.txnid;
+    const status = payload.status ?? payload.status_payment;
+    const orderIdRef = (payload.order_id ?? payload.reference) as
+      string | undefined;
+    const payToken = (payload.pay_token ??
+      payload.notif_token ??
+      payload.txnid) as string | undefined;
+    const canIdentifyPayment = Boolean(payToken || orderIdRef);
 
-    if (
-      status === 'SUCCESS' ||
-      status === 'PAID' ||
-      status === '00' ||
-      status === 'SUCCESSFUL'
-    ) {
-      const payment = await this.prisma.payment.findFirst({
-        where: {
-          OR: [
-            { transactionId: payToken },
-            { providerReference: payToken },
-            { order: { orderNumber: orderIdRef } },
-          ],
-        },
-        include: { order: true },
-      });
+    const payment = canIdentifyPayment
+      ? await this.prisma.payment.findFirst({
+          where: {
+            OR: [
+              { transactionId: payToken },
+              { providerReference: payToken },
+              { order: { orderNumber: orderIdRef } },
+            ],
+          },
+          include: { order: true },
+        })
+      : null;
 
+    if (isProviderSuccessStatus(status)) {
       if (payment && payment.status !== PaymentStatus.PAID) {
         await this.confirmPayment(
           payment.id,
           payment.orderId,
           'Orange Money Webhook',
+        );
+      }
+
+      return { status: 'OK' };
+    }
+
+    const failureKind = resolveFailureKind(status);
+
+    if (failureKind && payment && payment.status !== PaymentStatus.PAID) {
+      if (failureKind === 'expired') {
+        await this.markPaymentExpired(
+          payment.id,
+          payment.orderId,
+          `Orange Money : statut "${normalizeProviderStatus(status)}"`,
+        );
+      } else {
+        await this.markPaymentFailed(
+          payment.id,
+          payment.orderId,
+          `Orange Money : statut "${normalizeProviderStatus(status)}"`,
         );
       }
     }
@@ -450,8 +547,17 @@ export class PaymentsService {
       status: status || null,
     });
 
+    if (this.bictorysService.isExpiredStatus(status)) {
+      await this.markPaymentExpired(
+        payment.id,
+        payment.orderId,
+        `Bictorys : statut "${status}"`,
+      );
+      return { received: true, confirmed: false, status };
+    }
+
     if (this.bictorysService.isFailedStatus(status)) {
-      await this.markBictorysPaymentFailed(
+      await this.markPaymentFailed(
         payment.id,
         payment.orderId,
         `Bictorys : statut "${status}"`,
@@ -547,15 +653,21 @@ export class PaymentsService {
 
     // If transactionId is not yet known (webhook not received), try to find
     // the transaction by paymentReference (order number) directly from Bictorys
-    const orderNumber = payment.order?.orderNumber ?? (metadata.paymentReference as string | undefined) ?? '';
-    const resolvedTransactionId = transactionId ??
-      await this.bictorysService
+    const orderNumber =
+      payment.order?.orderNumber ??
+      (metadata.paymentReference as string | undefined) ??
+      '';
+    const resolvedTransactionId =
+      transactionId ??
+      (await this.bictorysService
         .findTransactionByReference(orderNumber)
         .then((tx) => {
           if (!tx) return null;
           // Security: ensure the transaction belongs to this order
-          const refMatch = !tx.paymentReference || tx.paymentReference === orderNumber;
-          const merchantMatch = !tx.merchantReference || tx.merchantReference === order.id;
+          const refMatch =
+            !tx.paymentReference || tx.paymentReference === orderNumber;
+          const merchantMatch =
+            !tx.merchantReference || tx.merchantReference === order.id;
           if (!refMatch || !merchantMatch) {
             this.logger.error(
               `findTransactionByReference: transaction ${tx.id} ne correspond pas à la commande ${order.id} (paymentReference=${tx.paymentReference}, merchantReference=${tx.merchantReference})`,
@@ -564,7 +676,7 @@ export class PaymentsService {
           }
           return tx.id;
         })
-        .catch(() => null);
+        .catch(() => null));
 
     if (!resolvedTransactionId) {
       return {
@@ -618,6 +730,83 @@ export class PaymentsService {
     };
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // CYCLE DE VIE : EXPIRATION ET RÉCONCILIATION
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Traite les paiements dont la fenêtre de paiement est dépassée.
+   *
+   * Un paiement n'est jamais déclaré abandonné sur la seule absence de
+   * webhook : le statut réel est d'abord vérifié chez Bictorys quand
+   * l'intégration le permet. Un délai de grâce (configurable) couvre les
+   * webhooks retardés. Un webhook tardif reste traité et peut encore
+   * confirmer un paiement déjà expiré localement.
+   */
+  async expireAbandonedPayments(now = new Date()): Promise<{
+    checked: number;
+    paid: number;
+    failed: number;
+    expired: number;
+    pending: number;
+    errors: number;
+  }> {
+    const payments = await this.prisma.payment.findMany({
+      where: {
+        status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
+        nextReconciliationAt: { lte: now },
+        provider: {
+          in: [
+            PaymentProvider.BICTORYS,
+            PaymentProvider.WAVE,
+            PaymentProvider.ORANGE_MONEY,
+          ],
+        },
+      },
+      include: { order: true },
+      orderBy: { nextReconciliationAt: 'asc' },
+      take: 50,
+    });
+
+    const summary = {
+      checked: payments.length,
+      paid: 0,
+      failed: 0,
+      expired: 0,
+      pending: 0,
+      errors: 0,
+    };
+
+    for (const payment of payments) {
+      try {
+        const outcome = await this.reconcilePayment(payment, now);
+        summary[outcome] += 1;
+      } catch (error) {
+        summary.errors += 1;
+        this.logger.error(
+          `Réconciliation du paiement ${payment.id} impossible : ${(error as Error).message}`,
+        );
+
+        try {
+          await this.scheduleNextReconciliation(
+            payment.id,
+            new Date(now.getTime() + this.reconciliationRetryMs),
+            {
+              lastReconciliationAt: now.toISOString(),
+              lastReconciliationError: (error as Error).message,
+            },
+          );
+        } catch (scheduleError) {
+          this.logger.error(
+            `Replanification du paiement ${payment.id} impossible : ${(scheduleError as Error).message}`,
+          );
+        }
+      }
+    }
+
+    return summary;
+  }
+
   /**
    * Statut de paiement d'une commande pour la page de retour du paiement.
    * Sert au client pour afficher l'état RÉEL du paiement : la redirection
@@ -655,6 +844,7 @@ export class PaymentsService {
         status: true,
         amount: true,
         currency: true,
+        expiresAt: true,
         paidAt: true,
       },
     });
@@ -675,6 +865,7 @@ export class PaymentsService {
             status: payment.status,
             amount: Number(payment.amount),
             currency: payment.currency,
+            expiresAt: payment.expiresAt,
             paidAt: payment.paidAt,
           }
         : null,
@@ -738,6 +929,376 @@ export class PaymentsService {
   // ─────────────────────────────────────────────────────────────────────────
   // FONCTIONS PRIVEES
   // ─────────────────────────────────────────────────────────────────────────
+
+  /** Dates de vie d'une nouvelle tentative de paiement en ligne. */
+  private buildPaymentDeadlines(now = new Date()) {
+    const expiresAt = new Date(now.getTime() + this.paymentExpirationMs);
+    return {
+      expiresAt,
+      nextReconciliationAt: new Date(expiresAt.getTime()),
+    };
+  }
+
+  /**
+   * Vérifie un paiement non définitif, puis :
+   * - le confirme si Bictorys le donne réussi ;
+   * - le marque en échec si Bictorys le donne échoué/expiré ;
+   * - le replanifie tant que le délai de grâce n'est pas atteint ;
+   * - l'expire (abandon) une fois le délai de grâce dépassé.
+   */
+  private async reconcilePayment(
+    payment: BictorysPaymentWithOrder,
+    now: Date,
+  ): Promise<'paid' | 'failed' | 'expired' | 'pending'> {
+    const expiresAt =
+      payment.expiresAt ??
+      new Date(payment.createdAt.getTime() + this.paymentExpirationMs);
+    const graceDeadline = new Date(
+      expiresAt.getTime() + this.paymentExpiryGraceMs,
+    );
+    const graceReached = now.getTime() >= graceDeadline.getTime();
+
+    if (payment.provider === PaymentProvider.BICTORYS) {
+      const inspection = await this.inspectBictorysPayment(payment);
+
+      if (inspection.outcome === 'paid') {
+        await this.confirmPayment(
+          payment.id,
+          payment.orderId,
+          'Réconciliation automatique Bictorys',
+          {
+            bictorysTransactionId:
+              inspection.transactionId ?? payment.transactionId,
+            bictorysStatus: inspection.status,
+            bictorysVerification: inspection.verification ?? 'server',
+          },
+        );
+        return 'paid';
+      }
+
+      if (inspection.outcome === 'failed') {
+        await this.markPaymentFailed(
+          payment.id,
+          payment.orderId,
+          inspection.reason ?? 'Bictorys : paiement refusé',
+        );
+        return 'failed';
+      }
+
+      if (inspection.outcome === 'expired') {
+        await this.markPaymentExpired(
+          payment.id,
+          payment.orderId,
+          inspection.reason ?? 'Bictorys : transaction expirée',
+        );
+        return 'expired';
+      }
+
+      if (graceReached) {
+        await this.markPaymentExpired(
+          payment.id,
+          payment.orderId,
+          inspection.reason ??
+            'Aucune confirmation de paiement reçue après le délai de grâce.',
+        );
+        return 'expired';
+      }
+
+      await this.scheduleNextReconciliation(
+        payment.id,
+        this.computeNextReconciliationAt(now, graceDeadline),
+        {
+          lastReconciliationAt: now.toISOString(),
+          lastReconciliationReason:
+            inspection.reason ?? 'Paiement toujours en attente.',
+        },
+      );
+      return 'pending';
+    }
+
+    if (graceReached) {
+      await this.markPaymentExpired(
+        payment.id,
+        payment.orderId,
+        'Aucune confirmation de paiement reçue après le délai de grâce.',
+      );
+      return 'expired';
+    }
+
+    await this.scheduleNextReconciliation(
+      payment.id,
+      this.computeNextReconciliationAt(now, graceDeadline),
+      {
+        lastReconciliationAt: now.toISOString(),
+        lastReconciliationReason:
+          'Vérification automatique du prestataire non disponible.',
+      },
+    );
+    return 'pending';
+  }
+
+  /**
+   * Interroge Bictorys pour connaître l'état réel d'un paiement.
+   * Aucune confirmation ne repose uniquement sur l'absence de webhook.
+   */
+  private async inspectBictorysPayment(
+    payment: BictorysPaymentWithOrder,
+  ): Promise<{
+    outcome: 'paid' | 'failed' | 'expired' | 'pending';
+    reason?: string;
+    transactionId?: string | null;
+    status?: string | null;
+    verification?: 'server' | 'webhook';
+  }> {
+    const metadata = readMetadata(payment.metadata);
+    let transactionId =
+      payment.transactionId ??
+      (metadata.bictorysTransactionId as string | undefined) ??
+      null;
+    let transaction: BictorysTransaction | null = null;
+    let readForbidden = false;
+
+    if (transactionId) {
+      try {
+        transaction = await this.bictorysService.getTransaction(transactionId);
+      } catch (error) {
+        if (!this.bictorysService.isTransactionReadForbidden(error)) {
+          return {
+            outcome: 'pending',
+            reason: `Vérification Bictorys impossible : ${(error as Error).message}`,
+          };
+        }
+        readForbidden = true;
+      }
+    } else {
+      try {
+        transaction = await this.bictorysService.findTransactionByReference(
+          payment.order.orderNumber,
+        );
+      } catch (error) {
+        return {
+          outcome: 'pending',
+          reason: `Recherche de la transaction Bictorys impossible : ${(error as Error).message}`,
+        };
+      }
+
+      if (transaction) {
+        transactionId = transaction.id;
+        await this.recordBictorysReconciliation(payment, transaction);
+      }
+    }
+
+    if (
+      transaction &&
+      !this.bictorysTransactionMatchesOrder(transaction, payment)
+    ) {
+      return {
+        outcome: 'pending',
+        reason: `La transaction Bictorys ${transaction.id} ne correspond pas à la commande ${payment.orderId}.`,
+        transactionId,
+        status: transaction.status,
+      };
+    }
+
+    if (transaction) {
+      if (this.bictorysService.isExpiredStatus(transaction.status)) {
+        return {
+          outcome: 'expired',
+          reason: `Bictorys : statut "${transaction.status}"`,
+          transactionId,
+          status: transaction.status,
+        };
+      }
+
+      if (this.bictorysService.isFailedStatus(transaction.status)) {
+        return {
+          outcome: 'failed',
+          reason: `Bictorys : statut "${transaction.status}"`,
+          transactionId,
+          status: transaction.status,
+        };
+      }
+
+      if (!this.bictorysService.isSuccessfulStatus(transaction.status)) {
+        return {
+          outcome: 'pending',
+          reason: `Bictorys : statut "${transaction.status}"`,
+          transactionId,
+          status: transaction.status,
+        };
+      }
+
+      const check = await this.verifyBictorysTransaction(payment, {
+        transactionId: transaction.id,
+        webhookAmount: null,
+        webhookCurrency: null,
+        webhookStatus: transaction.status,
+        transaction,
+      });
+
+      if (!check.ok) {
+        return {
+          outcome: 'pending',
+          reason: check.reason,
+          transactionId,
+          status: transaction.status,
+        };
+      }
+
+      return {
+        outcome: 'paid',
+        transactionId,
+        status: transaction.status,
+        verification: check.source ?? 'server',
+      };
+    }
+
+    if (readForbidden) {
+      return {
+        outcome: 'pending',
+        reason:
+          'Lecture des transactions Bictorys refusée par la clé API (vérification serveur indisponible).',
+        transactionId,
+      };
+    }
+
+    return {
+      outcome: 'pending',
+      reason: `Aucune transaction Bictorys trouvée pour la commande ${payment.order.orderNumber}.`,
+      transactionId,
+    };
+  }
+
+  /** Vérifie que la transaction Bictorys appartient bien à la commande. */
+  private bictorysTransactionMatchesOrder(
+    transaction: BictorysTransaction,
+    payment: BictorysPaymentWithOrder,
+  ): boolean {
+    const referenceMatches =
+      !transaction.paymentReference ||
+      transaction.paymentReference === payment.order.orderNumber;
+    const merchantMatches =
+      !transaction.merchantReference ||
+      transaction.merchantReference === payment.order.id;
+    return referenceMatches && merchantMatches;
+  }
+
+  /** Trace la transaction retrouvée par référence (webhook non reçu). */
+  private async recordBictorysReconciliation(
+    payment: BictorysPaymentWithOrder,
+    transaction: BictorysTransaction,
+  ) {
+    await this.prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        transactionId: payment.transactionId ?? transaction.id,
+        metadata: mergeMetadata(payment.metadata, {
+          bictorysTransactionId:
+            payment.transactionId ??
+            (readMetadata(payment.metadata).bictorysTransactionId as
+              string | undefined) ??
+            transaction.id,
+          bictorysReconciledAt: new Date().toISOString(),
+          bictorysReconciledStatus: transaction.status,
+          ...(transaction.pspName ? { pspName: transaction.pspName } : {}),
+        }),
+      },
+    });
+  }
+
+  private computeNextReconciliationAt(now: Date, graceDeadline: Date): Date {
+    return new Date(
+      Math.min(
+        now.getTime() + this.reconciliationRetryMs,
+        graceDeadline.getTime(),
+      ),
+    );
+  }
+
+  private async scheduleNextReconciliation(
+    paymentId: string,
+    nextReconciliationAt: Date,
+    metadataPatch: Record<string, unknown> = {},
+  ) {
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentId },
+    });
+
+    if (!payment || payment.status === PaymentStatus.PAID) {
+      return;
+    }
+
+    await this.prisma.payment.updateMany({
+      where: {
+        id: paymentId,
+        status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
+      },
+      data: {
+        nextReconciliationAt,
+        metadata: mergeMetadata(payment.metadata, metadataPatch),
+      },
+    });
+  }
+
+  /**
+   * Marque un paiement abandonné/expiré et annule automatiquement la
+   * commande associée (le stock réservé est réintégré).
+   */
+  private async markPaymentExpired(
+    paymentId: string,
+    orderId: string,
+    reason: string,
+  ): Promise<boolean> {
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentId },
+    });
+
+    if (
+      !payment ||
+      (payment.status !== PaymentStatus.PENDING &&
+        payment.status !== PaymentStatus.PROCESSING)
+    ) {
+      return false;
+    }
+
+    const expiredAt = new Date();
+    const expired = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.payment.updateMany({
+        where: {
+          id: paymentId,
+          status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
+        },
+        data: {
+          status: PaymentStatus.EXPIRED,
+          nextReconciliationAt: null,
+          metadata: mergeMetadata(payment.metadata, {
+            expirationReason: reason,
+            expiredAt: expiredAt.toISOString(),
+          }),
+        },
+      });
+
+      if (updated.count === 0) {
+        return false;
+      }
+
+      await this.cancelOrderForPaymentFailure(
+        tx,
+        orderId,
+        PaymentStatus.EXPIRED,
+        [PaymentStatus.PENDING, PaymentStatus.PROCESSING],
+        reason,
+      );
+
+      return true;
+    });
+
+    if (expired) {
+      this.logger.warn(`Paiement ${paymentId} expiré : ${reason}`);
+    }
+
+    return expired;
+  }
 
   /**
    * Retrouve le paiement Bictorys associé à une notification, par identifiant
@@ -821,8 +1382,8 @@ export class PaymentsService {
     });
   }
 
-  /** Paiement refusé par Bictorys : la commande n'est pas payée. */
-  private async markBictorysPaymentFailed(
+  /** Paiement refusé par le prestataire : la commande est annulée. */
+  private async markPaymentFailed(
     paymentId: string,
     orderId: string,
     reason: string,
@@ -834,11 +1395,14 @@ export class PaymentsService {
       return;
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.payment.update({
-        where: { id: paymentId },
+    const failed = await this.prisma.$transaction(async (tx) => {
+      // Un webhook d'échec retardé ne doit jamais écraser un paiement déjà
+      // confirmé par une autre notification ou par la réconciliation.
+      const updated = await tx.payment.updateMany({
+        where: { id: paymentId, status: { not: PaymentStatus.PAID } },
         data: {
           status: PaymentStatus.FAILED,
+          nextReconciliationAt: null,
           metadata: mergeMetadata(payment.metadata, {
             failureReason: reason,
             failedAt: new Date().toISOString(),
@@ -846,23 +1410,242 @@ export class PaymentsService {
         },
       });
 
-      await tx.order.updateMany({
-        where: {
-          id: orderId,
-          paymentStatus: {
-            in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING],
-          },
-        },
-        data: { paymentStatus: PaymentStatus.FAILED },
-      });
+      if (updated.count === 0) {
+        return false;
+      }
+
+      await this.cancelOrderForPaymentFailure(
+        tx,
+        orderId,
+        PaymentStatus.FAILED,
+        [
+          PaymentStatus.PENDING,
+          PaymentStatus.PROCESSING,
+          PaymentStatus.EXPIRED,
+        ],
+        reason,
+      );
+
+      return true;
     });
 
-    this.logger.warn(`Paiement Bictorys ${paymentId} échoué : ${reason}`);
+    if (failed) {
+      this.logger.warn(`Paiement ${paymentId} échoué : ${reason}`);
+    }
+  }
+
+  /**
+   * Annule la commande liée à un paiement expiré/échoué et réintègre le stock
+   * déjà débité à la création de la commande. L'annulation est idempotente :
+   * une commande déjà annulée/remboursée/livrée n'est jamais rouverte.
+   */
+  private async cancelOrderForPaymentFailure(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    paymentStatus: PaymentStatus,
+    allowedPaymentStatuses: PaymentStatus[],
+    reason: string,
+  ): Promise<boolean> {
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      include: { items: true },
+    });
+
+    if (!order) {
+      return false;
+    }
+
+    const canCancel =
+      order.status === OrderStatus.PENDING ||
+      order.status === OrderStatus.CONFIRMED ||
+      order.status === OrderStatus.IN_DELIVERY;
+    const canUpdatePaymentStatus = allowedPaymentStatuses.includes(
+      order.paymentStatus,
+    );
+
+    if (!canCancel && !canUpdatePaymentStatus) {
+      return false;
+    }
+
+    await tx.order.update({
+      where: { id: orderId },
+      data: {
+        ...(canUpdatePaymentStatus ? { paymentStatus } : {}),
+        ...(canCancel ? { status: OrderStatus.CANCELLED } : {}),
+      },
+    });
+
+    if (canCancel) {
+      await this.restoreOrderStock(tx, order, reason);
+    }
+
+    return true;
+  }
+
+  /** Réintègre le stock des articles d'une commande annulée. */
+  private async restoreOrderStock(
+    tx: Prisma.TransactionClient,
+    order: OrderWithItems,
+    reason: string,
+  ): Promise<void> {
+    for (const item of order.items ?? []) {
+      if (!(await this.tracksInventory(tx, item.variantId, item.productId))) {
+        continue;
+      }
+
+      if (item.variantId) {
+        await tx.productVariant.update({
+          where: { id: item.variantId },
+          data: { quantity: { increment: item.quantity } },
+        });
+        await this.syncParentStock(tx, item.productId);
+      } else {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { quantity: { increment: item.quantity } },
+        });
+      }
+
+      await tx.inventoryMovement.create({
+        data: {
+          quantity: item.quantity,
+          type: InventoryMovementType.RETURN,
+          reason: `Annulation automatique de la commande ${order.orderNumber} : ${reason}`,
+          productId: item.productId,
+          variantId: item.variantId,
+          referenceId: order.id,
+          referenceType: 'ORDER',
+          createdById: null,
+        },
+      });
+    }
+  }
+
+  /**
+   * Re-débite le stock lors de la confirmation tardive d'un paiement après
+   * annulation automatique. Retourne false si le stock n'est plus disponible :
+   * la commande reste alors annulée pour éviter une survente.
+   */
+  private async reserveOrderStock(
+    tx: Prisma.TransactionClient,
+    order: OrderWithItems,
+    reason: string,
+  ): Promise<boolean> {
+    const items = order.items ?? [];
+    const trackedItems: Array<{
+      item: OrderWithItems['items'][number];
+      hasVariant: boolean;
+    }> = [];
+
+    for (const item of items) {
+      if (item.variantId) {
+        const variant = await tx.productVariant.findUnique({
+          where: { id: item.variantId },
+          select: { trackInventory: true, quantity: true },
+        });
+        if (!variant?.trackInventory) {
+          continue;
+        }
+        if (variant.quantity < item.quantity) {
+          return false;
+        }
+      } else {
+        const product = await tx.product.findUnique({
+          where: { id: item.productId },
+          select: { trackInventory: true, quantity: true },
+        });
+        if (!product?.trackInventory) {
+          continue;
+        }
+        if (product.quantity < item.quantity) {
+          return false;
+        }
+      }
+
+      trackedItems.push({ item, hasVariant: Boolean(item.variantId) });
+    }
+
+    for (const { item, hasVariant } of trackedItems) {
+      if (hasVariant && item.variantId) {
+        await tx.productVariant.update({
+          where: { id: item.variantId },
+          data: { quantity: { decrement: item.quantity } },
+        });
+        await this.syncParentStock(tx, item.productId);
+      } else {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { quantity: { decrement: item.quantity } },
+        });
+      }
+
+      await tx.inventoryMovement.create({
+        data: {
+          quantity: item.quantity,
+          type: InventoryMovementType.SALE,
+          reason: `Réouverture de la commande ${order.orderNumber} : ${reason}`,
+          productId: item.productId,
+          variantId: item.variantId,
+          referenceId: order.id,
+          referenceType: 'ORDER',
+          createdById: null,
+        },
+      });
+    }
+
+    return true;
+  }
+
+  /** Indique si le stock est suivi pour un produit ou une variante. */
+  private async tracksInventory(
+    tx: Prisma.TransactionClient,
+    variantId: string | null,
+    productId: string,
+  ): Promise<boolean> {
+    if (variantId) {
+      const variant = await tx.productVariant.findUnique({
+        where: { id: variantId },
+        select: { trackInventory: true },
+      });
+      return variant?.trackInventory ?? false;
+    }
+
+    const product = await tx.product.findUnique({
+      where: { id: productId },
+      select: { trackInventory: true },
+    });
+    return product?.trackInventory ?? false;
+  }
+
+  /** Garde la quantité du produit parent synchronisée avec ses variantes. */
+  private async syncParentStock(
+    tx: Prisma.TransactionClient,
+    productId: string,
+  ): Promise<void> {
+    const product = await tx.product.findUnique({
+      where: { id: productId },
+      select: { hasVariants: true },
+    });
+
+    if (!product?.hasVariants) {
+      return;
+    }
+
+    const aggregate = await tx.productVariant.aggregate({
+      where: { productId },
+      _sum: { quantity: true },
+    });
+
+    await tx.product.update({
+      where: { id: productId },
+      data: { quantity: aggregate._sum.quantity ?? 0 },
+    });
   }
 
   /**
    * Paiement received mais non conforme (montant, devise, statut) : on le
    * laisse en PROCESSING et on trace le motif pour une revue manuelle.
+   * Un paiement déjà final (EXPIRED, FAILED…) n'est jamais ressuscité.
    */
   private async holdBictorysPayment(paymentId: string, reason: string) {
     const payment = await this.prisma.payment.findUnique({
@@ -872,10 +1655,21 @@ export class PaymentsService {
       return;
     }
 
+    const canReconcile =
+      payment.status === PaymentStatus.PENDING ||
+      payment.status === PaymentStatus.PROCESSING;
+
     await this.prisma.payment.update({
       where: { id: paymentId },
       data: {
-        status: PaymentStatus.PROCESSING,
+        ...(canReconcile
+          ? {
+              status: PaymentStatus.PROCESSING,
+              nextReconciliationAt: new Date(
+                Date.now() + this.reconciliationRetryMs,
+              ),
+            }
+          : {}),
         metadata: mergeMetadata(payment.metadata, {
           holdReason: reason,
           heldAt: new Date().toISOString(),
@@ -901,6 +1695,8 @@ export class PaymentsService {
       webhookAmount: number | null;
       webhookCurrency: string | null;
       webhookStatus: string | null;
+      /** Transaction déjà lue chez Bictorys (évite un second appel API). */
+      transaction?: BictorysTransaction | null;
     },
   ): Promise<{ ok: boolean; reason?: string; source?: 'server' | 'webhook' }> {
     const expectedAmount = Number(payment.order.total);
@@ -933,24 +1729,30 @@ export class PaymentsService {
       };
     }
 
-    let transaction: BictorysTransaction | null = null;
-    try {
-      transaction = await this.bictorysService.getTransaction(
-        context.transactionId,
-      );
-    } catch (error) {
-      if (!this.bictorysService.isTransactionReadForbidden(error)) {
-        return {
-          ok: false,
-          reason: `Vérification serveur Bictorys impossible : ${(error as Error).message}`,
-        };
-      }
+    const hasPreloadedTransaction = 'transaction' in context;
+    let transaction: BictorysTransaction | null = hasPreloadedTransaction
+      ? (context.transaction ?? null)
+      : null;
 
-      // Clé API sans droit de lecture : la notification authentifiée reste
-      // exploitable, mais la confirmation sera marquée comme telle.
-      this.logger.warn(
-        `Lecture de la transaction Bictorys ${context.transactionId} refusée par l'API (clé API sans droit de lecture) : la confirmation s'appuie sur la notification authentifiée par la clé secrète du webhook.`,
-      );
+    if (!hasPreloadedTransaction) {
+      try {
+        transaction = await this.bictorysService.getTransaction(
+          context.transactionId,
+        );
+      } catch (error) {
+        if (!this.bictorysService.isTransactionReadForbidden(error)) {
+          return {
+            ok: false,
+            reason: `Vérification serveur Bictorys impossible : ${(error as Error).message}`,
+          };
+        }
+
+        // Clé API sans droit de lecture : la notification authentifiée reste
+        // exploitable, mais la confirmation sera marquée comme telle.
+        this.logger.warn(
+          `Lecture de la transaction Bictorys ${context.transactionId} refusée par l'API (clé API sans droit de lecture) : la confirmation s'appuie sur la notification authentifiée par la clé secrète du webhook.`,
+        );
+      }
     }
 
     if (transaction) {
@@ -1047,6 +1849,8 @@ export class PaymentsService {
     delete (metadata as Record<string, unknown>).holdReason;
     delete (metadata as Record<string, unknown>).heldAt;
 
+    let stockReserved = true;
+
     const confirmed = await this.prisma.$transaction(async (tx) => {
       // Marquer le paiement comme PAID (uniquement s'il ne l'était pas déjà)
       const updated = await tx.payment.updateMany({
@@ -1054,6 +1858,7 @@ export class PaymentsService {
         data: {
           status: PaymentStatus.PAID,
           paidAt,
+          nextReconciliationAt: null,
           metadata,
         },
       });
@@ -1062,12 +1867,27 @@ export class PaymentsService {
         return false;
       }
 
+      const order = await tx.order.findUnique({
+        where: { id: orderId },
+        include: { items: true },
+      });
+
+      // Un paiement peut être confirmé après une annulation automatique
+      // (webhook tardif) : le stock réintégré doit alors être re-débité.
+      let nextStatus: OrderStatus = OrderStatus.CONFIRMED;
+      if (order?.status === OrderStatus.CANCELLED) {
+        stockReserved = await this.reserveOrderStock(tx, order, source);
+        if (!stockReserved) {
+          nextStatus = OrderStatus.CANCELLED;
+        }
+      }
+
       // Mettre à jour la commande associée
       await tx.order.update({
         where: { id: orderId },
         data: {
           paymentStatus: PaymentStatus.PAID,
-          status: OrderStatus.CONFIRMED,
+          status: nextStatus,
           paidAt,
         },
       });
@@ -1080,6 +1900,12 @@ export class PaymentsService {
         `Paiement ${paymentId} déjà confirmé (${source}) : aucune action.`,
       );
       return;
+    }
+
+    if (!stockReserved) {
+      this.logger.error(
+        `Paiement ${paymentId} confirmé via ${source} mais stock indisponible : la commande ${orderId} reste annulée.`,
+      );
     }
 
     this.logger.log(
@@ -1137,6 +1963,74 @@ type BictorysPaymentWithOrder = Prisma.PaymentGetPayload<{
   include: { order: true };
 }>;
 
+type OrderWithItems = Prisma.OrderGetPayload<{
+  include: { items: true };
+}>;
+
+/** Statuts considérés comme un paiement réussi. */
+const SUCCESS_PROVIDER_STATUSES = new Set([
+  'completed',
+  'complete',
+  'succeeded',
+  'success',
+  'successful',
+  'paid',
+  'authorized',
+  '00',
+]);
+
+/** Statuts d'expiration d'un paiement mobile. */
+const EXPIRED_PROVIDER_STATUSES = new Set([
+  'expired',
+  'expire',
+  'timeout',
+  'timed_out',
+  'timedout',
+]);
+
+/** Statuts d'échec d'un paiement mobile. */
+const FAILED_PROVIDER_STATUSES = new Set([
+  'failed',
+  'failure',
+  'cancelled',
+  'canceled',
+  'declined',
+  'rejected',
+  'error',
+  'reversed',
+]);
+
+function normalizeProviderStatus(value: unknown): string {
+  if (typeof value === 'string') {
+    return value
+      .trim()
+      .toLowerCase()
+      .replace(/^checkout\.session\./, '');
+  }
+  if (typeof value === 'number') {
+    return String(value);
+  }
+  return '';
+}
+
+function isProviderSuccessStatus(value: unknown): boolean {
+  return SUCCESS_PROVIDER_STATUSES.has(normalizeProviderStatus(value));
+}
+
+function resolveFailureKind(...values: unknown[]): 'expired' | 'failed' | null {
+  for (const value of values) {
+    const status = normalizeProviderStatus(value);
+    if (EXPIRED_PROVIDER_STATUSES.has(status)) {
+      return 'expired';
+    }
+    if (FAILED_PROVIDER_STATUSES.has(status)) {
+      return 'failed';
+    }
+  }
+
+  return null;
+}
+
 function readMetadata(metadata: unknown): Record<string, any> {
   if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
     return metadata as Record<string, any>;
@@ -1152,4 +2046,14 @@ function mergeMetadata(
     ...readMetadata(existing),
     ...patch,
   };
+}
+
+function readPositiveMinutes(
+  config: ConfigService,
+  key: string,
+  fallback: number,
+): number {
+  const raw = config.get<string | number>(key);
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 }

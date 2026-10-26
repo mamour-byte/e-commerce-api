@@ -52,6 +52,10 @@ API_PUBLIC_URL=https://xxxx.ngrok-free.dev
 FRONTEND_BROWSER_URL=http://localhost:5173
 # URL publique du front (fallback si FRONTEND_BROWSER_URL est absent)
 FRONTEND_URL=http://localhost:5173
+# Cycle de vie des paiements (règle métier Hayat Store, pas une expiration Bictorys)
+PAYMENT_EXPIRATION_MINUTES=15
+PAYMENT_EXPIRY_GRACE_MINUTES=10
+PAYMENT_RECONCILIATION_RETRY_MINUTES=15
 ```
 
 > En production, `API_PUBLIC_URL` et `FRONTEND_BROWSER_URL` doivent être en
@@ -234,6 +238,35 @@ Migration : `prisma/migrations/20261021170000_add_bictorys_payment_provider`.
 > transaction sur les versions < 12. La commande `prisma migrate deploy`
 > s'en charge ; pour une correction manuelle, exécuter le SQL du fichier de
 > migration directement sur la base.
+
+### 8.1 Cycle de vie d'un paiement abandonné
+
+Migration : `prisma/migrations/20261026120000_payment_lifecycle`.
+
+- À la création d'un paiement, `Payment.expiresAt` vaut `createdAt + 15 min`
+  et `Payment.nextReconciliationAt` est planifié immédiatement.
+- Un cron (`PaymentsJobsService`, toutes les minutes) appelle
+  `PaymentsService.expireAbandonedPayments()` et traite les paiements
+  `PENDING`/`PROCESSING` arrivés à échéance.
+- Délai total avant expiration : **25 min** (15 min de paiement + 10 min de
+  grâce), avec au plus ~1 min de décalage lié au cron.
+- Pour Bictorys, l'API est **toujours interrogée avant de conclure** :
+  - transaction réussie → `confirmPayment()` (statut `PAID`, commande `CONFIRMED`) ;
+  - transaction échouée → `FAILED` ;
+  - transaction `expired` → `EXPIRED` ;
+  - transaction encore en attente **avant** le délai de grâce (10 min par
+    défaut) → replanification de `nextReconciliationAt` (15 min, sans dépasser
+    la grâce) ;
+  - transaction encore en attente **après** la grâce → `EXPIRED`.
+- Les autres fournisseurs passent à `EXPIRED` après la grâce sans appel externe.
+- L'absence de webhook ne vaut pas échec. La commande n'est **pas annulée**
+  automatiquement : seul `paymentStatus` change, afin de ne pas libérer le stock
+  alors qu'un paiement tardif peut encore aboutir.
+- Un webhook tardif reste traité : `confirmPayment()` accepte la transition
+  `EXPIRED` → `PAID` de façon idempotente. `markBictorysPaymentFailed()` accepte
+  aussi les commandes dont le paiement est `EXPIRED`.
+- `Payment.nextReconciliationAt` est remis à `null` dès qu'un statut final
+  (`PAID`, `FAILED`, `EXPIRED`) est enregistré.
 
 ---
 

@@ -37,6 +37,9 @@ type PaymentRecord = {
   amount: number;
   currency: string;
   metadata: Record<string, unknown>;
+  expiresAt?: Date | null;
+  nextReconciliationAt?: Date | null;
+  createdAt?: Date;
   order: OrderRecord;
 };
 
@@ -96,9 +99,11 @@ describe('PaymentsService — flux Bictorys', () => {
     isConfigured: true,
     createCheckoutSession: jest.fn(),
     getTransaction: jest.fn(),
+    findTransactionByReference: jest.fn(),
     verifyWebhookSecret: jest.fn(),
     isSuccessfulStatus: jest.fn(),
     isFailedStatus: jest.fn(),
+    isExpiredStatus: jest.fn(),
     isTransactionReadForbidden: jest.fn(),
   };
 
@@ -138,6 +143,9 @@ describe('PaymentsService — flux Bictorys', () => {
         String(status).toLowerCase(),
       ),
     );
+    mockBictorysService.isExpiredStatus.mockImplementation(
+      (status: string) => String(status).toLowerCase() === 'expired',
+    );
     mockBictorysService.getTransaction.mockResolvedValue({
       id: 'tx_1',
       status: 'succeeded',
@@ -149,6 +157,7 @@ describe('PaymentsService — flux Bictorys', () => {
       raw: {},
     });
     mockBictorysService.isTransactionReadForbidden.mockReturnValue(false);
+    mockBictorysService.findTransactionByReference.mockResolvedValue(null);
 
     mockPrismaService.payment.findFirst.mockResolvedValue(payment);
     mockPrismaService.payment.findUnique.mockResolvedValue(payment);
@@ -290,14 +299,20 @@ describe('PaymentsService — flux Bictorys', () => {
 
     expect(result.confirmed).toBe(false);
 
-    const updateArgs = lastCallArgs(mockPrismaService.payment.update);
-    expect(updateArgs.where).toEqual({ id: 'pay_1' });
+    const updateArgs = lastCallArgs(mockPrismaService.payment.updateMany);
+    expect(updateArgs.where).toEqual({
+      id: 'pay_1',
+      status: { not: PaymentStatus.PAID },
+    });
     expect((updateArgs.data as { status: PaymentStatus }).status).toBe(
       PaymentStatus.FAILED,
     );
 
-    const orderArgs = lastCallArgs(mockPrismaService.order.updateMany);
-    expect(orderArgs.data).toEqual({ paymentStatus: PaymentStatus.FAILED });
+    const orderArgs = lastCallArgs(mockPrismaService.order.update);
+    expect(orderArgs.data).toMatchObject({
+      paymentStatus: PaymentStatus.FAILED,
+      status: OrderStatus.CANCELLED,
+    });
   });
 
   it('ignore un webhook sans correspondance sans modifier la base', async () => {
@@ -481,6 +496,135 @@ describe('PaymentsService — flux Bictorys', () => {
       expect(result.confirmed).toBe(true);
       expect(mockBictorysService.getTransaction).toHaveBeenCalledWith('tx_1');
       expect(mockPrismaService.payment.updateMany).toHaveBeenCalled();
+    });
+  });
+
+  describe('cycle de vie des paiements abandonnés', () => {
+    const now = new Date('2026-01-01T12:00:00.000Z');
+
+    function expiredCandidate(overrides: Partial<PaymentRecord> = {}) {
+      return {
+        ...payment,
+        status: PaymentStatus.PROCESSING,
+        transactionId: 'tx_1',
+        expiresAt: new Date('2026-01-01T09:00:00.000Z'),
+        nextReconciliationAt: new Date('2026-01-01T09:00:00.000Z'),
+        createdAt: new Date('2026-01-01T08:30:00.000Z'),
+        ...overrides,
+      };
+    }
+
+    it('confirme un paiement expiré localement si Bictorys le donne réussi', async () => {
+      mockPrismaService.payment.findMany.mockResolvedValue([
+        expiredCandidate(),
+      ]);
+
+      const summary = await service.expireAbandonedPayments(now);
+
+      expect(summary).toMatchObject({ checked: 1, paid: 1, expired: 0 });
+      const updateArgs = lastCallArgs(mockPrismaService.payment.updateMany);
+      expect((updateArgs.data as { status: PaymentStatus }).status).toBe(
+        PaymentStatus.PAID,
+      );
+      expect(mockNotificationsService.notifyPaymentReceived).toHaveBeenCalled();
+    });
+
+    it('marque le paiement en échec si Bictorys le donne échoué', async () => {
+      mockPrismaService.payment.findMany.mockResolvedValue([
+        expiredCandidate(),
+      ]);
+      mockBictorysService.getTransaction.mockResolvedValue({
+        id: 'tx_1',
+        status: 'failed',
+        amount: 15000,
+        currency: 'XOF',
+        paymentReference: ORDER_NUMBER,
+        merchantReference: ORDER_ID,
+        pspName: 'wave',
+        raw: {},
+      });
+
+      const summary = await service.expireAbandonedPayments(now);
+
+      expect(summary).toMatchObject({ checked: 1, failed: 1, expired: 0 });
+      const updateArgs = lastCallArgs(mockPrismaService.payment.updateMany);
+      expect((updateArgs.data as { status: PaymentStatus }).status).toBe(
+        PaymentStatus.FAILED,
+      );
+    });
+
+    it('expire un paiement toujours en attente après le délai de grâce', async () => {
+      mockPrismaService.payment.findMany.mockResolvedValue([
+        expiredCandidate(),
+      ]);
+      mockBictorysService.getTransaction.mockResolvedValue({
+        id: 'tx_1',
+        status: 'pending',
+        amount: 15000,
+        currency: 'XOF',
+        raw: {},
+      });
+
+      const summary = await service.expireAbandonedPayments(now);
+
+      expect(summary).toMatchObject({ checked: 1, expired: 1, pending: 0 });
+      const updateArgs = lastCallArgs(mockPrismaService.payment.updateMany);
+      expect((updateArgs.data as { status: PaymentStatus }).status).toBe(
+        PaymentStatus.EXPIRED,
+      );
+
+      const orderArgs = lastCallArgs(mockPrismaService.order.update);
+      expect(orderArgs.data).toMatchObject({
+        paymentStatus: PaymentStatus.EXPIRED,
+        status: OrderStatus.CANCELLED,
+      });
+    });
+
+    it('replanifie sans expirer lorsque le délai de grâce court encore', async () => {
+      mockPrismaService.payment.findMany.mockResolvedValue([
+        expiredCandidate({
+          expiresAt: new Date('2026-01-01T11:55:00.000Z'),
+          nextReconciliationAt: new Date('2026-01-01T11:55:00.000Z'),
+        }),
+      ]);
+      mockBictorysService.getTransaction.mockResolvedValue({
+        id: 'tx_1',
+        status: 'processing',
+        amount: 15000,
+        currency: 'XOF',
+        raw: {},
+      });
+
+      const summary = await service.expireAbandonedPayments(now);
+
+      expect(summary).toMatchObject({ checked: 1, pending: 1, expired: 0 });
+      const updateArgs = lastCallArgs(mockPrismaService.payment.updateMany);
+      expect(
+        (
+          updateArgs.data as { nextReconciliationAt: Date }
+        ).nextReconciliationAt.getTime(),
+      ).toBeGreaterThan(now.getTime());
+    });
+
+    it('accepte un webhook tardif après expiration locale et confirme la vente', async () => {
+      const expiredPayment = {
+        ...payment,
+        status: PaymentStatus.EXPIRED,
+        expiresAt: new Date('2026-01-01T09:00:00.000Z'),
+      };
+      mockPrismaService.payment.findFirst.mockResolvedValue(expiredPayment);
+      mockPrismaService.payment.findUnique.mockResolvedValue(expiredPayment);
+
+      const result = await service.handleBictorysWebhook(
+        webhookPayload,
+        'secret',
+      );
+
+      expect(result.confirmed).toBe(true);
+      const updateArgs = lastCallArgs(mockPrismaService.payment.updateMany);
+      expect((updateArgs.data as { status: PaymentStatus }).status).toBe(
+        PaymentStatus.PAID,
+      );
     });
   });
 });

@@ -51,6 +51,7 @@ enum PaymentStatus {
   PROCESSING
   PAID
   FAILED
+  EXPIRED
   CANCELLED
   REFUNDED
   PARTIALLY_REFUNDED
@@ -702,6 +703,12 @@ model Payment {
 
   status PaymentStatus @default(PENDING)
 
+  /** Fin de la fenêtre de paiement (règle métier Hayat Store). */
+  expiresAt DateTime?
+
+  /** Prochaine vérification serveur planifiée (paiement non définitif). */
+  nextReconciliationAt DateTime?
+
   metadata Json?
 
   paidAt DateTime?
@@ -715,6 +722,7 @@ model Payment {
   @@index([provider])
   @@index([status])
   @@index([createdAt])
+  @@index([status, nextReconciliationAt])
 }
 
 //////////////////////////////////////////////////////

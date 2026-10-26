@@ -657,10 +657,28 @@ export class OrdersService {
 
     const previousStatus = order.paymentStatus;
 
+    const shouldCancel =
+      (dto.status === PaymentStatus.FAILED ||
+        dto.status === PaymentStatus.EXPIRED) &&
+      (order.status === OrderStatus.PENDING ||
+        order.status === OrderStatus.CONFIRMED ||
+        order.status === OrderStatus.IN_DELIVERY);
+
     await this.prisma.order.update({
       where: { id },
       data: { paymentStatus: dto.status },
     });
+
+    if (shouldCancel) {
+      try {
+        await this.updateStatus(id, { status: OrderStatus.CANCELLED });
+      } catch (error) {
+        this.logger.error(
+          `Annulation automatique de la commande ${order.orderNumber} impossible après le statut de paiement ${dto.status}`,
+          error as Error,
+        );
+      }
+    }
 
     const updatedOrder = await this.findOne(id);
 
