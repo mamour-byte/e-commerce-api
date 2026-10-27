@@ -26,6 +26,7 @@ import {
   TrackSearchDto,
 } from './dto/tracking.dto';
 import { MetaCapiService } from './services/meta-capi.service';
+import { TikTokEventsApiService } from './services/tiktok-events-api.service';
 
 const SESSION_TIMEOUT_MINUTES = 30;
 
@@ -72,6 +73,7 @@ export class TrackingService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly metaCapi: MetaCapiService,
+    private readonly tiktokEventsApi: TikTokEventsApiService,
   ) {}
 
   private async touchSession(sessionId: string): Promise<void> {
@@ -176,15 +178,16 @@ export class TrackingService {
       include: { visitor: true },
     });
 
-    if (dto.fbc) {
+    if (dto.fbc || dto.fbp || dto.ttp) {
+      const updateData: Prisma.VisitorUncheckedUpdateInput = {
+        lastSeenAt: new Date(),
+      };
+      if (dto.fbc) updateData.fbc = dto.fbc;
+      if (dto.fbp) updateData.fbp = dto.fbp;
+      if (dto.ttp) updateData.ttp = dto.ttp;
       await this.prisma.visitor.update({
         where: { id: visitor.id },
-        data: { fbc: dto.fbc, fbp: dto.fbp, lastSeenAt: new Date() },
-      });
-    } else if (dto.fbp) {
-      await this.prisma.visitor.update({
-        where: { id: visitor.id },
-        data: { fbp: dto.fbp, lastSeenAt: new Date() },
+        data: updateData,
       });
     }
 
@@ -231,6 +234,9 @@ export class TrackingService {
     }
     if (dto.fbp) {
       updateData.fbp = dto.fbp;
+    }
+    if (dto.ttp) {
+      updateData.ttp = dto.ttp;
     }
     if (dto.userId) {
       updateData.userId = dto.userId;
@@ -324,7 +330,9 @@ export class TrackingService {
       referrer: undefined,
     });
 
-    void this.dispatchMetaCapi([event], requestContextFromSession(session));
+    const requestContext = requestContextFromSession(session);
+    void this.dispatchMetaCapi([event], requestContext);
+    void this.dispatchTikTokEvents([event], requestContext);
   }
 
   async trackEvents(dto: TrackEventsDto, _request?: unknown): Promise<void> {
@@ -335,11 +343,12 @@ export class TrackingService {
     }
     await this.touchSession(session.id);
 
-    // Mettre à jour fbp/fbc du visitor si fournis (améliore le matching Meta)
-    if (dto.fbp || dto.fbc) {
+    // Store first-party pixel cookies for server-side event matching.
+    if (dto.fbp || dto.fbc || dto.ttp) {
       const updateData: Record<string, string> = {};
       if (dto.fbp && !session.visitor.fbp) updateData.fbp = dto.fbp;
       if (dto.fbc && !session.visitor.fbc) updateData.fbc = dto.fbc;
+      if (dto.ttp && !session.visitor.ttp) updateData.ttp = dto.ttp;
       if (Object.keys(updateData).length) {
         await this.prisma.visitor.update({
           where: { id: session.visitorId },
@@ -384,6 +393,10 @@ export class TrackingService {
 
     if (events.length) {
       void this.dispatchMetaCapi(events, requestContextFromSession(session));
+      void this.dispatchTikTokEvents(
+        events,
+        requestContextFromSession(session),
+      );
     }
   }
 
@@ -460,10 +473,12 @@ export class TrackingService {
       });
 
       if (eventWithCtx) {
-        void this.dispatchMetaCapi([eventWithCtx], {
+        const requestContext = {
           ipAddress: order.session?.ipAddress || undefined,
           userAgent: order.session?.userAgent || undefined,
-        });
+        };
+        void this.dispatchMetaCapi([eventWithCtx], requestContext);
+        void this.dispatchTikTokEvents([eventWithCtx], requestContext);
       }
     }
   }
@@ -693,6 +708,67 @@ export class TrackingService {
       } catch (error) {
         this.logger.error(
           `Impossible d'enregistrer ConversionLog Meta pour ${event.id}: ${error}`,
+        );
+      }
+    }
+  }
+
+  private async dispatchTikTokEvents(
+    events: EventWithContext[],
+    ctx?: { ipAddress?: string; userAgent?: string },
+  ): Promise<void> {
+    if (!events.length) return;
+
+    const result = await this.tiktokEventsApi.dispatch(events, ctx);
+    for (const event of events) {
+      try {
+        await this.prisma.conversionLog.upsert({
+          where: {
+            eventId_provider: {
+              eventId: event.id,
+              provider: 'TIKTOK_EVENTS_API',
+            },
+          },
+          update: {
+            status:
+              result.status === 'sent'
+                ? 'SENT'
+                : result.status === 'skipped'
+                  ? 'SKIPPED'
+                  : 'FAILED',
+            attempts: { increment: 1 },
+            lastError: result.error,
+            responseCode: result.responseCode,
+            responseBody: result.responseBody?.slice(0, 1000),
+            sentAt: result.status === 'sent' ? new Date() : undefined,
+            nextRetryAt:
+              result.status === 'failed'
+                ? new Date(Date.now() + 5 * 60 * 1000)
+                : null,
+          },
+          create: {
+            eventId: event.id,
+            provider: 'TIKTOK_EVENTS_API',
+            status:
+              result.status === 'sent'
+                ? 'SENT'
+                : result.status === 'skipped'
+                  ? 'SKIPPED'
+                  : 'FAILED',
+            attempts: 1,
+            lastError: result.error,
+            responseCode: result.responseCode,
+            responseBody: result.responseBody?.slice(0, 1000),
+            sentAt: result.status === 'sent' ? new Date() : undefined,
+            nextRetryAt:
+              result.status === 'failed'
+                ? new Date(Date.now() + 5 * 60 * 1000)
+                : null,
+          },
+        });
+      } catch (error) {
+        this.logger.error(
+          `Impossible d'enregistrer ConversionLog TikTok pour ${event.id}: ${error}`,
         );
       }
     }

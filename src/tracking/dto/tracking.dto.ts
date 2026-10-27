@@ -119,6 +119,11 @@ export class StartSessionDto extends ClickIdsDto {
   @IsOptional()
   fbp?: string;
 
+  @IsString()
+  @MaxLength(512)
+  @IsOptional()
+  ttp?: string;
+
   @IsBoolean()
   consentGranted: boolean;
 }
@@ -207,6 +212,11 @@ export class TrackEventsDto {
   @IsOptional()
   fbc?: string;
 
+  @IsString()
+  @MaxLength(512)
+  @IsOptional()
+  ttp?: string;
+
   @IsArray()
   @ArrayMaxSize(MAX_EVENTS_PER_BATCH)
   @ValidateNested({ each: true })
@@ -258,6 +268,11 @@ export class IdentifyDto {
   @MaxLength(2)
   @IsOptional()
   country?: string;
+
+  @IsString()
+  @MaxLength(512)
+  @IsOptional()
+  ttp?: string;
 
   @IsString()
   @MaxLength(512)

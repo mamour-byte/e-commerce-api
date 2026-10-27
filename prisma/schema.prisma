@@ -146,6 +146,7 @@ enum TouchpointKind {
 
 enum ConversionProvider {
   META_CAPI
+  TIKTOK_EVENTS_API
   GOOGLE_OFFLINE
 }
 
@@ -876,6 +877,7 @@ model Visitor {
   fbp        String?
   gaClientId String?
   ttclid     String?
+  ttp        String?
 
   firstSeenAt DateTime @default(now())
   lastSeenAt  DateTime @default(now())

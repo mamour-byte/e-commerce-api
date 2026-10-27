@@ -1,0 +1,3 @@
+ALTER TYPE "ConversionProvider" ADD VALUE 'TIKTOK_EVENTS_API';
+
+ALTER TABLE "Visitor" ADD COLUMN "ttp" TEXT;
